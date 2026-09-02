@@ -1,0 +1,4 @@
+# Zirkel: nirgends in Suchergebnissen auftauchen (defense-in-depth zum <meta name="robots">-Tag)
+<IfModule mod_headers.c>
+  Header always set X-Robots-Tag "noindex, nofollow, noarchive, nosnippet, noimageindex, notranslate"
+</IfModule>

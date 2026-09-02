@@ -1,0 +1,156 @@
+<!doctype html>
+<html lang="de">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Zirkel</title>
+<meta name="robots" content="noindex, nofollow, noarchive, nosnippet, noimageindex, notranslate">
+<meta name="theme-color" content="#12141c">
+<link rel="manifest" href="/manifest.webmanifest">
+<link rel="icon" href="/icons/icon-192.png">
+<link rel="apple-touch-icon" href="/icons/icon-192.png">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<meta name="apple-mobile-web-app-title" content="Zirkel">
+<link rel="stylesheet" href="/styles.css">
+</head>
+<body>
+
+<!-- ================= LOGIN / SETUP ================= -->
+<main id="auth-screen" class="auth-screen">
+  <div class="auth-card">
+    <div class="auth-brand">
+      <svg class="auth-mark" viewBox="0 0 48 48" aria-hidden="true">
+        <circle cx="24" cy="24" r="21" fill="none" stroke="currentColor" stroke-width="2" opacity="0.35"/>
+        <circle cx="24" cy="12" r="4" fill="currentColor"/>
+        <circle cx="13" cy="31" r="4" fill="currentColor"/>
+        <circle cx="35" cy="31" r="4" fill="currentColor"/>
+        <path d="M24 16 L15 27.5 M24 16 L33 27.5 M17 31 H31" stroke="currentColor" stroke-width="1.6" opacity="0.6"/>
+      </svg>
+      <h1>Zirkel</h1>
+    </div>
+    <p class="auth-tagline">Nur fuer euch zwei.</p>
+
+    <div id="auth-tabs" class="auth-tabs" hidden>
+      <button type="button" class="auth-tab" data-tab="login">Anmelden</button>
+      <button type="button" class="auth-tab" data-tab="register">Konto anlegen</button>
+    </div>
+
+    <form id="login-form" class="auth-form" autocomplete="on">
+      <label class="field">
+        <span>Benutzername</span>
+        <input type="text" name="username" autocomplete="username" required>
+      </label>
+      <label class="field">
+        <span>Passwort</span>
+        <input type="password" name="password" autocomplete="current-password" required>
+      </label>
+      <label class="check">
+        <input type="checkbox" name="remember" checked>
+        <span>Angemeldet bleiben (fuer schnellen Zugriff)</span>
+      </label>
+      <button type="submit" class="btn btn-primary btn-block">Anmelden</button>
+      <p class="auth-error" id="login-error" hidden></p>
+    </form>
+
+    <form id="register-form" class="auth-form" autocomplete="on" hidden>
+      <p class="auth-hint" id="register-hint"></p>
+      <label class="field">
+        <span>Dein Anzeigename</span>
+        <input type="text" name="displayName" autocomplete="name" required maxlength="60">
+      </label>
+      <label class="field">
+        <span>Benutzername</span>
+        <input type="text" name="username" autocomplete="username" required maxlength="40">
+      </label>
+      <label class="field">
+        <span>Passwort (mind. 8 Zeichen)</span>
+        <input type="password" name="password" autocomplete="new-password" required minlength="8">
+      </label>
+      <button type="submit" class="btn btn-primary btn-block">Konto anlegen</button>
+      <p class="auth-error" id="register-error" hidden></p>
+    </form>
+
+    <p class="auth-footnote">Aus Datenschutzgruenden ist ein Login noetig. Einmal angemeldet, bleibt ihr auf diesem Geraet angemeldet.</p>
+  </div>
+</main>
+
+<!-- ================= HAUPT-APP ================= -->
+<div id="app" hidden>
+  <header class="topbar">
+    <button id="btn-sidebar-toggle" class="btn btn-ghost sidebar-toggle" aria-label="Personenliste">☰</button>
+    <div class="brand">
+      <svg class="brand-mark" viewBox="0 0 48 48" aria-hidden="true">
+        <circle cx="24" cy="24" r="21" fill="none" stroke="currentColor" stroke-width="2.4" opacity="0.35"/>
+        <circle cx="24" cy="12" r="4" fill="currentColor"/>
+        <circle cx="13" cy="31" r="4" fill="currentColor"/>
+        <circle cx="35" cy="31" r="4" fill="currentColor"/>
+        <path d="M24 16 L15 27.5 M24 16 L33 27.5 M17 31 H31" stroke="currentColor" stroke-width="1.6" opacity="0.6"/>
+      </svg>
+      <span class="brand-name">Zirkel</span>
+    </div>
+
+    <div class="search-wrap">
+      <svg class="search-icon" viewBox="0 0 20 20" aria-hidden="true"><circle cx="9" cy="9" r="6" fill="none" stroke="currentColor" stroke-width="1.8"/><path d="M14 14 L18 18" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/></svg>
+      <input id="search" type="search" placeholder="Namen suchen… ( / )" autocomplete="off" aria-label="Namen suchen">
+    </div>
+
+    <div class="topbar-actions">
+      <span id="save-status" class="save-status" data-state="saved">Gespeichert</span>
+      <button id="btn-add-person" class="btn btn-primary">+ Person</button>
+      <div class="menu-wrap">
+        <button id="btn-menu" class="btn btn-ghost" aria-haspopup="true" aria-expanded="false">⋯</button>
+        <div id="menu-dropdown" class="menu-dropdown" hidden>
+          <button type="button" data-action="categories">Kategorien verwalten</button>
+          <button type="button" data-action="export">Als JSON exportieren</button>
+          <label class="menu-item-file">Aus JSON importieren<input id="import-file" type="file" accept="application/json" hidden></label>
+          <button type="button" data-action="theme">Hell / Dunkel umschalten</button>
+          <button type="button" data-action="account">Konto &amp; Passwort</button>
+          <hr>
+          <button type="button" data-action="logout">Abmelden</button>
+        </div>
+      </div>
+    </div>
+  </header>
+
+  <div id="update-banner" class="update-banner" hidden>
+    <span>Es gibt eine neue Version von Zirkel.</span>
+    <button id="btn-update-reload" class="btn btn-primary btn-small">Neu laden</button>
+  </div>
+
+  <div class="layout">
+    <div id="sidebar-scrim" class="sidebar-scrim"></div>
+    <aside class="sidebar" id="sidebar">
+      <div class="sidebar-stats" id="sidebar-stats"></div>
+      <div class="legend" id="legend"></div>
+      <div class="people-list" id="people-list"></div>
+      <div class="empty-state" id="empty-state" hidden>
+        <p>Noch keine Personen im Netzwerk.</p>
+        <button class="btn btn-primary" id="btn-add-first">Erste Person hinzufuegen</button>
+      </div>
+    </aside>
+
+    <main class="canvas-wrap">
+      <svg id="graph"></svg>
+      <div class="canvas-hint">Ziehen zum Verschieben · Scrollen zum Zoomen</div>
+      <div class="canvas-empty" id="canvas-empty" hidden>
+        <p>Euer Netzwerk ist noch leer.</p>
+      </div>
+    </main>
+  </div>
+
+  <aside class="drawer" id="drawer" hidden>
+    <div id="drawer-content"></div>
+  </aside>
+
+  <div class="modal-overlay" id="modal-overlay" hidden>
+    <div class="modal" id="modal-content" role="dialog" aria-modal="true"></div>
+  </div>
+
+  <div class="toast" id="toast" hidden></div>
+</div>
+
+<script src="/vendor/d3.min.js"></script>
+<script src="/app.js"></script>
+</body>
+</html>
