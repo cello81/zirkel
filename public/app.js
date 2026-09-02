@@ -299,19 +299,34 @@
   function renderLegend() {
     const legend = document.getElementById('legend');
     const counts = {};
-    state.people.forEach((p) => { counts[p.categoryId || ''] = (counts[p.categoryId || ''] || 0) + 1; });
-    legend.innerHTML = state.categories.map((c) => `
-      <button type="button" class="legend-chip ${hiddenCategoryIds.has(c.id) ? 'off' : ''}" data-cat="${c.id}">
+    state.people.forEach((p) => { counts[p.categoryId || '__none__'] = (counts[p.categoryId || '__none__'] || 0) + 1; });
+    const chips = state.categories.map((c) => `
+      <button type="button" class="legend-chip ${hiddenCategoryIds.has(c.id) ? 'off' : ''}" data-cat="${c.id}" title="Kategorie ein-/ausblenden">
         <span class="dot" style="background:${c.color}"></span>${escapeHtml(c.name)} (${counts[c.id] || 0})
-      </button>`).join('') +
+      </button>`).join('');
+    const noneCount = counts['__none__'] || 0;
+    const noneChip = noneCount > 0 ? `
+      <button type="button" class="legend-chip ${hiddenCategoryIds.has('__none__') ? 'off' : ''}" data-cat="__none__" title="Kategorie ein-/ausblenden">
+        <span class="dot" style="background:${categoryColor(null)}"></span>Ohne Kategorie (${noneCount})
+      </button>` : '';
+    const resetChip = hiddenCategoryIds.size > 0 ? `<button type="button" class="legend-reset" id="btn-legend-reset">Alle anzeigen</button>` : '';
+    legend.innerHTML = chips + noneChip + resetChip +
       `<button type="button" class="legend-manage" id="btn-legend-manage">Verwalten</button>`;
     legend.querySelectorAll('.legend-chip').forEach((btn) => {
       btn.addEventListener('click', () => {
         const id = btn.dataset.cat;
         if (hiddenCategoryIds.has(id)) hiddenCategoryIds.delete(id); else hiddenCategoryIds.add(id);
         renderLegend();
+        renderPeopleList();
         renderGraph(false);
       });
+    });
+    const resetBtn = document.getElementById('btn-legend-reset');
+    if (resetBtn) resetBtn.addEventListener('click', () => {
+      hiddenCategoryIds.clear();
+      renderLegend();
+      renderPeopleList();
+      renderGraph(false);
     });
     document.getElementById('btn-legend-manage').addEventListener('click', () => openModal('categories'));
   }
@@ -330,8 +345,12 @@
     canvasEmpty.hidden = true;
     let people = state.people.slice().sort((a, b) => a.name.localeCompare(b.name, 'de'));
     if (searchQuery) people = people.filter((p) => matchesSearch(p, searchQuery));
+    people = people.filter((p) => !hiddenCategoryIds.has(p.categoryId || '__none__'));
     if (people.length === 0) {
-      list.innerHTML = `<div class="empty-state"><p>Keine Treffer fuer „${escapeHtml(searchQuery)}“.</p></div>`;
+      const msg = searchQuery
+        ? `Keine Treffer fuer „${escapeHtml(searchQuery)}“.`
+        : 'Keine Personen in den ausgewaehlten Kategorien sichtbar.';
+      list.innerHTML = `<div class="empty-state"><p>${msg}</p></div>`;
       return;
     }
     list.innerHTML = people.map((p) => `
@@ -492,7 +511,7 @@
       <div class="drawer-header"><h2>Person</h2><button class="drawer-close" id="drawer-close" aria-label="Schliessen">×</button></div>
       <div class="drawer-body">
         <label class="field"><span>Name</span><input type="text" id="f-name" value="${escapeHtml(p.name)}" placeholder="Name"></label>
-        <label class="field"><span>Geburtstag${p.birthDate && ageFromBirthDate(p.birthDate) != null ? ` <span class="field-hint">(${ageFromBirthDate(p.birthDate)} Jahre)</span>` : ''}</span><input type="date" id="f-birthdate" value="${p.birthDate || ''}" max="${new Date().toISOString().slice(0, 10)}"></label>
+        <label class="field"><span>Geburtstag <span class="field-hint" id="f-birthdate-hint">${p.birthDate && ageFromBirthDate(p.birthDate) != null ? `(${ageFromBirthDate(p.birthDate)} Jahre)` : ''}</span></span><input type="date" id="f-birthdate" value="${p.birthDate || ''}" max="${new Date().toISOString().slice(0, 10)}"></label>
         <label class="field"><span>Kategorie</span>
           <select id="f-category">
             <option value="">Keine Kategorie</option>
@@ -509,7 +528,7 @@
               return `<div class="conn-row" data-cid="${c.id}">
                 <span class="conn-dot" style="background:${categoryColor(other.categoryId)}"></span>
                 <span class="conn-name" data-goto="${other.id}">${escapeHtml(other.name)}</span>
-                <input type="text" class="conn-label-edit" data-cid="${c.id}" value="${escapeHtml(c.label || '')}" placeholder="Beziehung">
+                <input type="text" class="conn-label-edit" data-cid="${c.id}" value="${escapeHtml(c.label || '')}" placeholder="Beziehung" list="relationship-types">
                 <button class="conn-remove" data-remove="${c.id}" title="Verbindung entfernen">×</button>
               </div>`;
             }).join('') || '<p class="auth-hint">Noch keine Verbindungen.</p>'}
@@ -519,7 +538,7 @@
               <option value="">Person waehlen…</option>
               ${candidates.map((o) => `<option value="${o.id}">${escapeHtml(o.name)}</option>`).join('')}
             </select>
-            <input type="text" id="conn-label-input" placeholder="Beziehung (optional)">
+            <input type="text" id="conn-label-input" placeholder="Beziehung (optional)" list="relationship-types">
             <button class="btn btn-primary btn-small" id="btn-add-conn">+ Verbindung</button>
           </div>
         </div>
@@ -534,7 +553,8 @@
     document.getElementById('f-birthdate').addEventListener('change', (e) => {
       p.birthDate = e.target.value || null;
       renderPeopleList(); scheduleSave();
-      renderDrawer(id);
+      const hint = document.getElementById('f-birthdate-hint');
+      if (hint) hint.textContent = (p.birthDate && ageFromBirthDate(p.birthDate) != null) ? `(${ageFromBirthDate(p.birthDate)} Jahre)` : '';
     });
     document.getElementById('f-category').addEventListener('change', (e) => {
       p.categoryId = e.target.value || null;
