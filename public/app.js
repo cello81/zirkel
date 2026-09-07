@@ -1,4 +1,4 @@
-// Zirkel — Frontend-Logik. Vanilla JS + D3 fuer die Graph-Darstellung.
+// Zirkel — Frontend-Logik. Vanilla JS + D3 für die Graph-Darstellung.
 (function () {
   'use strict';
 
@@ -31,7 +31,7 @@
   }
   function maybeShowInstallBanner() {
     const banner = document.getElementById('install-banner');
-    if (!banner) return; // App-Shell noch nicht eingefuegt (nicht eingeloggt)
+    if (!banner) return; // App-Shell noch nicht eingefügt (nicht eingeloggt)
     if (isStandaloneDisplay()) return;
     if (localStorage.getItem('zirkel-install-dismissed') === '1') return;
     if (deferredInstallPrompt || isIOS()) banner.hidden = false;
@@ -140,10 +140,10 @@
 
   // ------------------------------------------------ app shell (nach Login)
   // Der komplette Inhalt der eigentlichen App wird bewusst NICHT im
-  // ausgelieferten HTML mitgeschickt, sondern erst per JS eingefuegt, nachdem
-  // eine gueltige Session bestaetigt wurde (startApp()). So steht im
+  // ausgelieferten HTML mitgeschickt, sondern erst per JS eingefügt, nachdem
+  // eine gültige Session bestätigt wurde (startApp()). So steht im
   // ausgeloggten Zustand (z. B. im "View Source" oder bei einem Crawler, der
-  // robots.txt ignoriert) nichts ueber Zweck/Inhalt der App im Dokument.
+  // robots.txt ignoriert) nichts über Zweck/Inhalt der App im Dokument.
   const APP_SHELL_HTML = `
     <header class="topbar">
       <button id="btn-sidebar-toggle" class="btn btn-ghost sidebar-toggle" aria-label="Personenliste">☰</button>
@@ -187,9 +187,9 @@
     </div>
 
     <div id="install-banner" class="update-banner install-banner" hidden>
-      <span>Zirkel laesst sich als App installieren - fuer schnelleren Zugriff.</span>
+      <span>Zirkel lässt sich als App installieren - für schnelleren Zugriff.</span>
       <button id="btn-install" class="btn btn-primary btn-small">Installieren</button>
-      <button id="btn-install-dismiss" class="btn btn-ghost btn-small">Spaeter</button>
+      <button id="btn-install-dismiss" class="btn btn-ghost btn-small">Später</button>
     </div>
 
     <div class="layout">
@@ -200,7 +200,7 @@
         <div class="people-list" id="people-list"></div>
         <div class="empty-state" id="empty-state" hidden>
           <p>Noch keine Personen im Netzwerk.</p>
-          <button class="btn btn-primary" id="btn-add-first">Erste Person hinzufuegen</button>
+          <button class="btn btn-primary" id="btn-add-first">Erste Person hinzufügen</button>
         </div>
       </aside>
 
@@ -343,7 +343,7 @@
     wireAppEventsOnce();
     initServiceWorker();
     maybeShowInstallBanner();
-    // Kein staendiges Polling - die Ansicht wird beim Oeffnen (Start, erneutes
+    // Kein ständiges Polling - die Ansicht wird beim Öffnen (Start, erneutes
     // Sichtbarwerden des Tabs bzw. Fokus, z. B. nach dem Wechsel zur App) neu geladen.
     document.addEventListener('visibilitychange', () => { if (!document.hidden) backgroundRefresh(); });
     window.addEventListener('focus', backgroundRefresh);
@@ -493,8 +493,8 @@
     people = people.filter((p) => !hiddenCategoryIds.has(p.categoryId || '__none__'));
     if (people.length === 0) {
       const msg = searchQuery
-        ? `Keine Treffer fuer „${escapeHtml(searchQuery)}“.`
-        : 'Keine Personen in den ausgewaehlten Kategorien sichtbar.';
+        ? `Keine Treffer für «${escapeHtml(searchQuery)}».`
+        : 'Keine Personen in den ausgewählten Kategorien sichtbar.';
       list.innerHTML = `<div class="empty-state"><p>${msg}</p></div>`;
       return;
     }
@@ -685,17 +685,15 @@
             }).join('') || '<p class="auth-hint">Noch keine Verbindungen.</p>'}
           </div>
           <div class="add-conn-row">
-            <select id="conn-person-select">
-              <option value="">Person waehlen…</option>
-              <option value="__new__">+ Neue Person…</option>
-              ${candidates.map((o) => `<option value="${o.id}">${escapeHtml(o.name)}</option>`).join('')}
-            </select>
-            <input type="text" id="conn-new-name" placeholder="Name der neuen Person" hidden>
+            <div class="person-search" id="conn-person-search-wrap">
+              <input type="text" id="conn-person-search" placeholder="Person suchen oder neu anlegen…" autocomplete="off">
+              <div class="person-search-list" id="conn-person-list" hidden></div>
+            </div>
             <input type="text" id="conn-label-input" placeholder="Beziehung (optional)" list="relationship-types">
             <button class="btn btn-primary btn-small" id="btn-add-conn">+ Verbindung</button>
           </div>
         </div>
-        <button class="btn btn-danger" id="btn-delete-person">Person loeschen</button>
+        <button class="btn btn-danger" id="btn-delete-person">Person löschen</button>
       </div>`;
 
     document.getElementById('drawer-close').addEventListener('click', () => selectPerson(null));
@@ -733,29 +731,65 @@
         renderStats(); renderGraph(true); renderDrawer(id); scheduleSave(true);
       });
     });
-    const connPersonSelect = document.getElementById('conn-person-select');
-    const connNewNameInput = document.getElementById('conn-new-name');
-    connPersonSelect.addEventListener('change', () => {
-      const isNew = connPersonSelect.value === '__new__';
-      connNewNameInput.hidden = !isNew;
-      if (isNew) connNewNameInput.focus();
+    // Personensuche für neue Verbindung: Buchstaben eintippen filtert die
+    // Auswahl live; Klick auf einen Treffer wählt ihn, sonst kann direkt
+    // eine neue Person mit dem eingetippten Namen angelegt werden.
+    const personSearchInput = document.getElementById('conn-person-search');
+    const personSearchList = document.getElementById('conn-person-list');
+    let connSelectedId = null;
+
+    function closePersonSearch() { personSearchList.hidden = true; }
+    function renderPersonSearch() {
+      const q = personSearchInput.value.trim();
+      const ql = q.toLowerCase();
+      const matches = (ql ? candidates.filter((o) => o.name.toLowerCase().includes(ql)) : candidates)
+        .sort((a, b) => a.name.localeCompare(b.name, 'de-CH'))
+        .slice(0, 40);
+      const rows = matches.map((o) => `<button type="button" class="person-search-item" data-id="${o.id}">${highlightMatch(o.name, q)}</button>`).join('');
+      const newLabel = q ? `+ Neue Person «${escapeHtml(q)}» anlegen` : '+ Neue Person anlegen';
+      const emptyHint = (!matches.length && q) ? `<div class="person-search-empty">Keine Treffer für «${escapeHtml(q)}».</div>` : '';
+      personSearchList.innerHTML = emptyHint + rows + `<button type="button" class="person-search-item person-search-new" data-new="1">${newLabel}</button>`;
+      personSearchList.hidden = false;
+      personSearchList.querySelectorAll('[data-id]').forEach((btn) => {
+        btn.addEventListener('click', () => {
+          const other = personById(btn.dataset.id);
+          if (!other) return;
+          connSelectedId = other.id;
+          personSearchInput.value = other.name;
+          closePersonSearch();
+        });
+      });
+      personSearchList.querySelector('[data-new]').addEventListener('click', () => {
+        connSelectedId = null;
+        closePersonSearch();
+        addConnection(true);
+      });
+    }
+    personSearchInput.addEventListener('input', () => { connSelectedId = null; renderPersonSearch(); });
+    personSearchInput.addEventListener('focus', renderPersonSearch);
+    personSearchInput.addEventListener('keydown', (e) => {
+      if (e.key === 'Escape') { closePersonSearch(); personSearchInput.blur(); }
+      if (e.key === 'Enter') {
+        e.preventDefault();
+        const first = personSearchList.querySelector('.person-search-item');
+        if (first) first.click();
+      }
     });
-    document.getElementById('btn-add-conn').addEventListener('click', () => {
-      const sel = connPersonSelect.value;
+    function addConnection(createNew) {
       const label = document.getElementById('conn-label-input').value.trim();
-      let otherId = sel;
-      if (sel === '__new__') {
-        const name = connNewNameInput.value.trim();
-        if (!name) { connNewNameInput.focus(); return; }
+      let otherId = connSelectedId;
+      if (createNew || !otherId) {
+        const name = personSearchInput.value.trim();
+        if (!name) { personSearchInput.focus(); return; }
         const newP = { id: uid('p'), name, categoryId: p.categoryId || null, notes: '', birthDate: null, x: (p.x || 0) + (Math.random() - 0.5) * 60, y: (p.y || 0) + (Math.random() - 0.5) * 60 };
         state.people.push(newP);
         otherId = newP.id;
       }
-      if (!otherId || otherId === '__new__') return;
       state.connections.push({ id: uid('e'), a: id, b: otherId, label });
       renderAll(true); scheduleSave(true);
-    });
-    wireDangerButton(document.getElementById('btn-delete-person'), 'Person loeschen', 'Wirklich loeschen?', () => {
+    }
+    document.getElementById('btn-add-conn').addEventListener('click', () => addConnection(false));
+    wireDangerButton(document.getElementById('btn-delete-person'), 'Person löschen', 'Wirklich löschen?', () => {
       state.people = state.people.filter((x) => x.id !== id);
       state.connections = state.connections.filter((c) => c.a !== id && c.b !== id);
       closeDrawer();
@@ -800,13 +834,13 @@
             <input type="color" class="cat-color" data-id="${c.id}" value="${c.color}">
             <input type="text" class="cat-name" data-id="${c.id}" value="${escapeHtml(c.name)}">
             <span class="auth-hint">${counts[c.id] || 0}×</span>
-            <button class="conn-remove" data-delcat="${c.id}" title="Kategorie loeschen">×</button>
+            <button class="conn-remove" data-delcat="${c.id}" title="Kategorie löschen">×</button>
           </div>`).join('')}
       </div>
       <div class="new-cat-row">
         <input type="color" id="new-cat-color" value="${nextPaletteColor()}">
         <input type="text" id="new-cat-name" placeholder="Neue Kategorie">
-        <button class="btn btn-primary btn-small" id="btn-add-cat">Hinzufuegen</button>
+        <button class="btn btn-primary btn-small" id="btn-add-cat">Hinzufügen</button>
       </div>
       <div style="margin-top:18px; text-align:right;"><button class="btn btn-ghost" id="modal-close">Schliessen</button></div>`;
 
@@ -821,7 +855,7 @@
     }, 200)));
     document.querySelectorAll('[data-delcat]').forEach((btn) => btn.addEventListener('click', () => {
       const id = btn.dataset.delcat;
-      if (!confirm('Kategorie wirklich loeschen? Zugeordnete Personen verlieren dann ihre Kategorie.')) return;
+      if (!confirm('Kategorie wirklich löschen? Zugeordnete Personen verlieren dann ihre Kategorie.')) return;
       state.categories = state.categories.filter((c) => c.id !== id);
       state.people.forEach((p) => { if (p.categoryId === id) p.categoryId = null; });
       hiddenCategoryIds.delete(id);
@@ -849,7 +883,7 @@
       <form id="pw-form" style="display:flex; flex-direction:column; gap:14px; margin-top:16px;">
         <label class="field"><span>Aktuelles Passwort</span><input type="password" id="pw-current" required></label>
         <label class="field"><span>Neues Passwort (mind. 8 Zeichen)</span><input type="password" id="pw-new" minlength="8" required></label>
-        <button class="btn btn-primary" type="submit">Passwort aendern</button>
+        <button class="btn btn-primary" type="submit">Passwort ändern</button>
         <p class="auth-error" id="pw-error" hidden></p>
         <p class="auth-hint" id="pw-success" hidden>Passwort aktualisiert.</p>
       </form>
@@ -892,11 +926,11 @@
     const reader = new FileReader();
     reader.onload = () => {
       let parsed;
-      try { parsed = JSON.parse(reader.result); } catch (e) { showToast('Datei ist kein gueltiges JSON.'); return; }
+      try { parsed = JSON.parse(reader.result); } catch (e) { showToast('Datei ist kein gültiges JSON.'); return; }
       if (!parsed || !Array.isArray(parsed.people) || !Array.isArray(parsed.categories) || !Array.isArray(parsed.connections)) {
         showToast('Datei hat nicht das erwartete Zirkel-Format.'); return;
       }
-      if (!confirm('Das aktuelle Netzwerk durch die importierte Datei ersetzen? Das laesst sich nicht rueckgaengig machen.')) return;
+      if (!confirm('Das aktuelle Netzwerk durch die importierte Datei ersetzen? Das lässt sich nicht rückgängig machen.')) return;
       state = parsed;
       selectedPersonId = null;
       closeDrawer();
@@ -909,8 +943,8 @@
 
   // ------------------------------------------------------------ service worker
   let swRegistration = null;
-  // Nur reload(), wenn WIR das ueber den "Neu laden"-Button ausgeloest haben.
-  // Ohne dieses Flag fuehrt der Standard-"controllerchange"-Trick auch beim
+  // Nur reload(), wenn WIR das über den "Neu laden"-Button ausgelöst haben.
+  // Ohne dieses Flag führt der Standard-"controllerchange"-Trick auch beim
   // allerersten Aktivieren des Service Workers (clients.claim() beim ersten
   // Login) zu einem ungewollten Reload, der gerade angefangene Eingaben
   // (z. B. eine frisch angelegte, noch unbenannte Person) verwirft.
@@ -968,6 +1002,12 @@
     });
     document.addEventListener('click', () => { document.getElementById('menu-dropdown').hidden = true; });
 
+    document.addEventListener('click', (e) => {
+      const wrap = document.getElementById('conn-person-search-wrap');
+      const list = document.getElementById('conn-person-list');
+      if (wrap && list && !wrap.contains(e.target)) list.hidden = true;
+    });
+
     document.getElementById('menu-dropdown').addEventListener('click', (e) => {
       const action = e.target.closest('[data-action]');
       if (!action) return;
@@ -1002,7 +1042,7 @@
         deferredInstallPrompt = null;
         document.getElementById('install-banner').hidden = true;
       } else if (isIOS()) {
-        showToast('Installieren: Teilen-Symbol antippen, dann "Zum Home-Bildschirm".');
+        showToast('Installieren: Teilen-Symbol antippen, dann «Zum Home-Bildschirm».');
       }
     });
     document.getElementById('btn-install-dismiss').addEventListener('click', () => {
