@@ -1,7 +1,7 @@
 // Zirkel Service Worker
 // Versionsnummer bei jedem Deploy erhoehen, damit installierte Apps das
 // Update erkennen (siehe README "Updates ausliefern").
-const APP_VERSION = 'v3';
+const APP_VERSION = 'v5';
 const CACHE_NAME = 'zirkel-shell-' + APP_VERSION;
 
 const SHELL_ASSETS = [
