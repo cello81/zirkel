@@ -167,9 +167,11 @@ input[type="color"] { width: 36px; height: 32px; padding: 2px; border-radius: 6p
 .menu-dropdown hr { border: none; border-top: 1px solid var(--border); margin: 4px 0; }
 
 .update-banner {
-  display: flex; align-items: center; justify-content: center; gap: 12px;
+  display: flex; align-items: center; justify-content: center; gap: 12px; flex-wrap: wrap;
   padding: 8px 14px; background: var(--accent); color: var(--accent-contrast); font-size: 0.85rem; font-weight: 600;
 }
+.update-banner .btn-ghost { color: inherit; border-color: currentColor; }
+.update-banner .btn-ghost:hover { background: rgba(255,255,255,0.12); }
 
 .layout { flex: 1; display: grid; grid-template-columns: 300px 1fr; min-height: 0; }
 .sidebar {
@@ -220,6 +222,7 @@ input[type="color"] { width: 36px; height: 32px; padding: 2px; border-radius: 6p
 .canvas-empty { position: absolute; inset: 0; display: grid; place-items: center; color: var(--text-dim); font-size: 1rem; }
 
 .node-label { font-family: var(--font-body); font-size: 11px; fill: var(--text); paint-order: stroke; stroke: var(--bg); stroke-width: 3px; pointer-events: none; }
+.node-age { font-family: var(--font-body); font-size: 10px; font-weight: 600; fill: #fff; paint-order: stroke; stroke: rgba(0,0,0,0.45); stroke-width: 2px; pointer-events: none; }
 .link-line { stroke: var(--border); stroke-width: 1.6px; }
 .link-line.active { stroke: var(--accent); stroke-width: 2.2px; }
 .link-label { font-family: var(--font-mono); font-size: 9px; fill: var(--text-dim); paint-order: stroke; stroke: var(--bg); stroke-width: 3px; pointer-events: none; }
