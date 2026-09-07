@@ -10,6 +10,7 @@
   --accent: #b5691a;
   --accent-contrast: #ffffff;
   --danger: #b3372c;
+  --heart: #d1477e;
   --shadow: 0 12px 32px -12px rgba(20, 22, 30, 0.28);
   --radius: 10px;
   --font-display: Georgia, 'Iowan Old Style', 'Palatino Linotype', serif;
@@ -27,6 +28,7 @@ html[data-theme="dark"] {
   --border: #2c3040;
   --accent: #e8a33d;
   --accent-contrast: #1a1206;
+  --heart: #ef6fa3;
   --shadow: 0 16px 40px -14px rgba(0, 0, 0, 0.55);
 }
 
@@ -41,6 +43,7 @@ html[data-theme="dark"] {
     --border: #2c3040;
     --accent: #e8a33d;
     --accent-contrast: #1a1206;
+    --heart: #ef6fa3;
     --shadow: 0 16px 40px -14px rgba(0, 0, 0, 0.55);
   }
 }
@@ -225,7 +228,10 @@ input[type="color"] { width: 36px; height: 32px; padding: 2px; border-radius: 6p
 .node-age { font-family: var(--font-body); font-size: 10px; font-weight: 600; fill: #fff; paint-order: stroke; stroke: rgba(0,0,0,0.45); stroke-width: 2px; pointer-events: none; }
 .link-line { stroke: var(--border); stroke-width: 1.6px; }
 .link-line.active { stroke: var(--accent); stroke-width: 2.2px; }
+.link-line.is-partner { stroke: var(--heart); stroke-width: 2.2px; opacity: 0.75; }
+.link-line.is-partner.active { stroke: var(--heart); stroke-width: 2.6px; opacity: 1; }
 .link-label { font-family: var(--font-mono); font-size: 9px; fill: var(--text-dim); paint-order: stroke; stroke: var(--bg); stroke-width: 3px; pointer-events: none; }
+.link-heart { font-size: 13px; fill: var(--heart); paint-order: stroke; stroke: var(--bg); stroke-width: 3px; pointer-events: none; }
 .node-circle { stroke: var(--bg); stroke-width: 2px; cursor: pointer; }
 .node-circle.selected { stroke: var(--accent); stroke-width: 3px; }
 .node-g.dim { opacity: 0.22; }
@@ -276,6 +282,7 @@ input[type="color"] { width: 36px; height: 32px; padding: 2px; border-radius: 6p
 .cat-row { display: flex; align-items: center; gap: 8px; padding: 6px 0; }
 .cat-row input[type="text"] { flex: 1; }
 .new-cat-row { display: flex; gap: 8px; margin-top: 12px; padding-top: 12px; border-top: 1px solid var(--border); }
+#bulk-textarea { font-family: var(--font-mono); font-size: 0.85rem; min-height: 200px; margin-top: 12px; }
 
 /* ============ Toast ============ */
 .toast {
@@ -300,4 +307,5 @@ input[type="color"] { width: 36px; height: 32px; padding: 2px; border-radius: 6p
     display: block; position: fixed; inset: 0; background: rgba(10,11,15,0.4); z-index: 44;
   }
   .canvas-hint { display: none; }
+  .desktop-only-item { display: none; }
 }

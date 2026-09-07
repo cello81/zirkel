@@ -116,6 +116,24 @@
   function neighborsOf(personId) {
     return new Set(connectionsFor(personId).map((c) => otherPersonInConnection(c, personId)));
   }
+  function isPartnerLabel(label) { return /partner/i.test(label || ''); }
+  function isChildLabel(label) { return /kind/i.test(label || ''); }
+  function partnersOf(personId) {
+    return connectionsFor(personId)
+      .filter((c) => isPartnerLabel(c.label))
+      .map((c) => otherPersonInConnection(c, personId));
+  }
+  // Kinder gelten standardmässig als mit beiden Partnern verbunden: sobald
+  // eine Kind-Beziehung zu einem Elternteil eingetragen wird, wird automatisch
+  // dieselbe Beziehung zu dessen Partner/in ergänzt (falls noch keine besteht).
+  function ensureChildLinkedToPartners(parentId, childId, label) {
+    partnersOf(parentId).forEach((partnerId) => {
+      if (partnerId === childId) return;
+      const alreadyLinked = state.connections.some((c) =>
+        (c.a === partnerId && c.b === childId) || (c.a === childId && c.b === partnerId));
+      if (!alreadyLinked) state.connections.push({ id: uid('e'), a: partnerId, b: childId, label });
+    });
+  }
 
   function showToast(msg, ms) {
     const el = document.getElementById('toast');
@@ -169,6 +187,7 @@
         <div class="menu-wrap">
           <button id="btn-menu" class="btn btn-ghost" aria-haspopup="true" aria-expanded="false">⋯</button>
           <div id="menu-dropdown" class="menu-dropdown" hidden>
+            <button type="button" data-action="bulk" class="desktop-only-item">Mehrere Personen erfassen</button>
             <button type="button" data-action="categories">Kategorien verwalten</button>
             <button type="button" data-action="export">Als JSON exportieren</button>
             <label class="menu-item-file">Aus JSON importieren<input id="import-file" type="file" accept="application/json" hidden></label>
@@ -528,7 +547,7 @@
     svg.on('click', () => selectPerson(null));
 
     simulation = d3.forceSimulation()
-      .force('link', d3.forceLink().id((d) => d.id).distance(105).strength(0.5))
+      .force('link', d3.forceLink().id((d) => d.id).distance((d) => isPartnerLabel(d.label) ? 46 : 105).strength(0.5))
       .force('charge', d3.forceManyBody().strength(-260))
       .force('collide', d3.forceCollide(NODE_R + 26))
       .force('center', d3.forceCenter())
@@ -591,10 +610,12 @@
     const linkEnter = linkSel.enter().append('g').attr('class', 'link-g');
     linkEnter.append('line').attr('class', 'link-line');
     linkEnter.append('text').attr('class', 'link-label').attr('text-anchor', 'middle');
+    linkEnter.append('text').attr('class', 'link-heart').attr('text-anchor', 'middle');
     linkSelRef = linkEnter.merge(linkSel);
-    linkSelRef.select('text.link-label').text((d) => d.label);
+    linkSelRef.select('text.link-label').text((d) => isPartnerLabel(d.label) ? '' : d.label);
+    linkSelRef.select('text.link-heart').text((d) => isPartnerLabel(d.label) ? '♥' : '');
     linkSelRef.classed('dim', (d) => !linkVisible(d));
-    linkSelRef.select('line.link-line').classed('active', linkTouchesSelection);
+    linkSelRef.select('line.link-line').classed('active', linkTouchesSelection).classed('is-partner', (d) => isPartnerLabel(d.label));
 
     const nodeSel = nodesLayer.selectAll('g.node-g').data(state.people, (d) => d.id);
     nodeSel.exit().remove();
@@ -629,6 +650,9 @@
       linkSelRef.select('text.link-label')
         .attr('x', (d) => (d.source.x + d.target.x) / 2)
         .attr('y', (d) => (d.source.y + d.target.y) / 2 - 5);
+      linkSelRef.select('text.link-heart')
+        .attr('x', (d) => (d.source.x + d.target.x) / 2)
+        .attr('y', (d) => (d.source.y + d.target.y) / 2 + 4);
     }
     if (nodeSelRef) nodeSelRef.attr('transform', (d) => `translate(${d.x || 0},${d.y || 0})`);
   }
@@ -722,7 +746,13 @@
     document.querySelectorAll('.conn-label-edit').forEach((el) => {
       el.addEventListener('input', debounce((e) => {
         const c = state.connections.find((x) => x.id === e.target.dataset.cid);
-        if (c) { c.label = e.target.value; renderGraph(false); scheduleSave(); }
+        if (!c) return;
+        c.label = e.target.value;
+        if (isChildLabel(c.label)) {
+          ensureChildLinkedToPartners(id, otherPersonInConnection(c, id), c.label);
+          renderAll(true); scheduleSave(true); return;
+        }
+        renderGraph(false); scheduleSave();
       }, 200));
     });
     document.querySelectorAll('[data-remove]').forEach((btn) => {
@@ -786,6 +816,7 @@
         otherId = newP.id;
       }
       state.connections.push({ id: uid('e'), a: id, b: otherId, label });
+      if (isChildLabel(label)) ensureChildLinkedToPartners(id, otherId, label);
       renderAll(true); scheduleSave(true);
     }
     document.getElementById('btn-add-conn').addEventListener('click', () => addConnection(false));
@@ -819,6 +850,7 @@
   function openModal(kind) {
     document.getElementById('modal-overlay').hidden = false;
     if (kind === 'categories') renderCategoriesModal();
+    if (kind === 'bulk') renderBulkModal();
     if (kind === 'account') renderAccountModal();
   }
   function closeModal() { document.getElementById('modal-overlay').hidden = true; }
@@ -872,6 +904,69 @@
       renderAll(false);
       scheduleSave();
       renderCategoriesModal();
+    });
+  }
+
+  // ------------------------------------------------------- bulk-erfassung
+  // Für die Erfassung am PC: eine Person pro Zeile, "Name; Kategorie;
+  // Geburtstag" — Kategorie und Geburtstag optional. Nur im Desktop-Layout
+  // im Menü sichtbar (siehe .desktop-only-item in styles.css), da Copy-Paste
+  // und mehrzeilige Texteingabe am Handy unpraktisch sind.
+  function parseBulkBirthDate(raw) {
+    if (!raw) return null;
+    let m = /^(\d{4})-(\d{2})-(\d{2})$/.exec(raw);
+    if (m) return raw;
+    m = /^(\d{1,2})\.(\d{1,2})\.(\d{4})$/.exec(raw);
+    if (m) return `${m[3]}-${m[2].padStart(2, '0')}-${m[1].padStart(2, '0')}`;
+    return null;
+  }
+  function findOrCreateCategoryByName(name) {
+    if (!name) return null;
+    const existing = state.categories.find((c) => c.name.toLowerCase() === name.toLowerCase());
+    if (existing) return existing.id;
+    const cat = { id: uid('cat'), name, color: nextPaletteColor() };
+    state.categories.push(cat);
+    return cat.id;
+  }
+  function importBulkPeople(text) {
+    const lines = text.split('\n').map((l) => l.trim()).filter(Boolean);
+    let added = 0, skipped = 0;
+    lines.forEach((line) => {
+      const [namePart, categoryPart, birthPart] = line.split(';').map((s) => (s || '').trim());
+      if (!namePart) { skipped++; return; }
+      state.people.push({
+        id: uid('p'),
+        name: namePart,
+        categoryId: findOrCreateCategoryByName(categoryPart),
+        notes: '',
+        birthDate: parseBulkBirthDate(birthPart),
+        x: (Math.random() - 0.5) * 60,
+        y: (Math.random() - 0.5) * 60
+      });
+      added++;
+    });
+    return { added, skipped };
+  }
+  function renderBulkModal() {
+    document.getElementById('modal-content').innerHTML = `
+      <h2>Mehrere Personen erfassen</h2>
+      <p class="auth-hint">Eine Person pro Zeile: <strong>Name; Kategorie; Geburtstag</strong>. Kategorie und Geburtstag sind optional (Geburtstag als JJJJ-MM-TT oder TT.MM.JJJJ). Unbekannte Kategorien werden automatisch angelegt.</p>
+      <textarea id="bulk-textarea" rows="10" placeholder="Anna Muster; Freundin; 1990-04-12
+Peter Beispiel; Kollege
+Lisa Nachbarin"></textarea>
+      <div style="margin-top:18px; display:flex; justify-content:flex-end; gap:10px;">
+        <button class="btn btn-ghost" id="modal-close">Abbrechen</button>
+        <button class="btn btn-primary" id="btn-bulk-submit">Personen anlegen</button>
+      </div>`;
+    document.getElementById('modal-close').addEventListener('click', closeModal);
+    document.getElementById('bulk-textarea').focus();
+    document.getElementById('btn-bulk-submit').addEventListener('click', () => {
+      const { added, skipped } = importBulkPeople(document.getElementById('bulk-textarea').value);
+      closeModal();
+      if (added > 0) { renderAll(true); scheduleSave(true); }
+      showToast(added > 0
+        ? `${added} ${added === 1 ? 'Person' : 'Personen'} hinzugefügt${skipped ? `, ${skipped} Zeile(n) übersprungen` : ''}.`
+        : 'Keine Personen erkannt.');
     });
   }
 
@@ -1013,6 +1108,7 @@
       if (!action) return;
       const kind = action.dataset.action;
       if (kind === 'categories') openModal('categories');
+      if (kind === 'bulk') openModal('bulk');
       if (kind === 'account') openModal('account');
       if (kind === 'export') exportJSON();
       if (kind === 'theme') toggleTheme();
