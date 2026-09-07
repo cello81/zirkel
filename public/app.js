@@ -554,8 +554,15 @@
       .on('tick', ticked);
 
     dragBehavior = d3.drag()
-      .on('start', (event, d) => { if (!event.active) simulation.alphaTarget(0.25).restart(); d.fx = d.x; d.fy = d.y; })
-      .on('drag', (event, d) => { d.fx = event.x; d.fy = event.y; })
+      .on('start', (event, d) => {
+        if (!event.active) simulation.alphaTarget(0.25).restart();
+        d.a.fx = d.a.x; d.a.fy = d.a.y;
+        if (d.type === 'pair') { d.b.fx = d.b.x; d.b.fy = d.b.y; }
+      })
+      .on('drag', (event, d) => {
+        d.a.fx = event.x; d.a.fy = event.y;
+        if (d.type === 'pair') { d.b.fx = event.x; d.b.fy = event.y; }
+      })
       .on('end', (event, d) => { if (!event.active) simulation.alphaTarget(0); scheduleSave(); });
 
     resizeGraph();
@@ -571,73 +578,171 @@
     simulation.alpha(0.1).restart();
   }
 
-  function egoSetFor(id) {
+  // Verpartnerte Personen werden nicht als zwei Kreise dargestellt, sondern
+  // als ein gemeinsamer Herz-Knoten. Jede Person ist höchstens in einem
+  // solchen "gesperrten" Paar (die erste gefundene Partner-Verbindung
+  // gewinnt) — weitere Partner-Verbindungen (z. B. Ex-Partner) fallen auf
+  // die alte Darstellung (Linie + Herz-Symbol) zurück.
+  function computeLockedPairs() {
+    const pairOfPerson = new Map();
+    const used = new Set();
+    state.connections.forEach((c) => {
+      if (!isPartnerLabel(c.label)) return;
+      if (used.has(c.a) || used.has(c.b)) return;
+      if (!personById(c.a) || !personById(c.b) || c.a === c.b) return;
+      used.add(c.a); used.add(c.b);
+      pairOfPerson.set(c.a, c.b);
+      pairOfPerson.set(c.b, c.a);
+    });
+    return pairOfPerson;
+  }
+  function pairKeyOf(personId, pairOfPerson) {
+    const partnerId = pairOfPerson.get(personId);
+    return partnerId ? [personId, partnerId].sort().join('|') : null;
+  }
+  function resolvedKey(personId, pairOfPerson) {
+    return pairKeyOf(personId, pairOfPerson) || personId;
+  }
+  function keyToIds(key) { return key.indexOf('|') !== -1 ? key.split('|') : [key]; }
+  function positionOfKey(key) {
+    const ids = keyToIds(key);
+    if (ids.length === 1) { const p = personById(ids[0]); return { x: (p && p.x) || 0, y: (p && p.y) || 0 }; }
+    const [p1, p2] = ids.map(personById);
+    if (!p1 || !p2) return { x: 0, y: 0 };
+    return { x: ((p1.x || 0) + (p2.x || 0)) / 2, y: ((p1.y || 0) + (p2.y || 0)) / 2 };
+  }
+  function heartPath(r) {
+    return `M0,${r * 0.3} C${-r},${-r * 0.4} ${-r * 1.6},${r * 0.6} 0,${r * 1.6} ` +
+      `C${r * 1.6},${r * 0.6} ${r},${-r * 0.4} 0,${r * 0.3} Z`;
+  }
+  // Baut aus den rohen Verbindungen die anzuzeigenden Linien: Verbindungen,
+  // deren beide Enden im selben gesperrten Paar liegen, werden unterdrückt
+  // (das Paar wird ja schon als Herz dargestellt); Verbindungen zum selben
+  // Ziel-Schlüssel (z. B. zwei "Kind"-Verbindungen zu beiden Elternteilen
+  // eines Paares) werden zu einer einzigen Linie zusammengefasst.
+  function buildDisplayLinks(pairOfPerson) {
+    const map = new Map();
+    const order = [];
+    state.connections.forEach((c) => {
+      if (!personById(c.a) || !personById(c.b)) return;
+      const aKey = resolvedKey(c.a, pairOfPerson);
+      const bKey = resolvedKey(c.b, pairOfPerson);
+      if (aKey === bKey) return;
+      const dedupeKey = [aKey, bKey].sort().join('~~');
+      let entry = map.get(dedupeKey);
+      if (!entry) {
+        entry = { id: 'dl:' + dedupeKey, sourceKey: aKey, targetKey: bKey, labels: [] };
+        map.set(dedupeKey, entry);
+        order.push(entry);
+      }
+      if (c.label && !entry.labels.includes(c.label)) entry.labels.push(c.label);
+    });
+    return order;
+  }
+
+  function egoSetFor(id, pairOfPerson) {
     if (!id) return null;
-    return new Set([id, ...neighborsOf(id)]);
+    const set = new Set([id, ...neighborsOf(id)]);
+    const partnerId = pairOfPerson.get(id);
+    if (partnerId) set.add(partnerId);
+    return set;
   }
 
   function renderGraph(structural) {
     if (!simulation) initGraph();
 
-    const ego = egoSetFor(selectedPersonId);
+    const pairOfPerson = computeLockedPairs();
+    const ego = egoSetFor(selectedPersonId, pairOfPerson);
     function nodeVisible(d) {
+      if (!d) return false;
       if (hiddenCategoryIds.has(d.categoryId || '__none__')) return false;
       if (searchQuery && !matchesSearch(d, searchQuery)) return false;
       if (ego && !ego.has(d.id)) return false;
       return true;
     }
+    function keyVisible(key) { return keyToIds(key).map(personById).some(nodeVisible); }
+    function keyTouchesSelection(key) { return !!selectedPersonId && keyToIds(key).includes(selectedPersonId); }
 
+    // Physik-Simulation läuft weiterhin auf den echten Personen-Knoten und
+    // allen rohen Verbindungen (inkl. der gespiegelten Kind-Verbindungen) —
+    // das zieht z. B. Kinder zu beiden Elternteilen hin. Nur die Darstellung
+    // (unten) gruppiert Paare und dedupliziert Linien.
     const linkObjs = state.connections.map((c) => ({ id: c.id, source: c.a, target: c.b, label: c.label || '' }));
     simulation.nodes(state.people);
     simulation.force('link').links(linkObjs);
     if (structural) simulation.alpha(0.6).restart();
 
-    function linkVisible(l) {
-      const s = typeof l.source === 'object' ? l.source : personById(l.source);
-      const t = typeof l.target === 'object' ? l.target : personById(l.target);
-      if (!s || !t) return false;
-      return nodeVisible(s) && nodeVisible(t);
-    }
-    function linkTouchesSelection(l) {
-      if (!selectedPersonId) return false;
-      const sId = typeof l.source === 'object' ? l.source.id : l.source;
-      const tId = typeof l.target === 'object' ? l.target.id : l.target;
-      return sId === selectedPersonId || tId === selectedPersonId;
-    }
-
-    const linkSel = linksLayer.selectAll('g.link-g').data(linkObjs, (d) => d.id);
+    const displayLinks = buildDisplayLinks(pairOfPerson);
+    const linkSel = linksLayer.selectAll('g.link-g').data(displayLinks, (d) => d.id);
     linkSel.exit().remove();
     const linkEnter = linkSel.enter().append('g').attr('class', 'link-g');
     linkEnter.append('line').attr('class', 'link-line');
     linkEnter.append('text').attr('class', 'link-label').attr('text-anchor', 'middle');
     linkEnter.append('text').attr('class', 'link-heart').attr('text-anchor', 'middle');
     linkSelRef = linkEnter.merge(linkSel);
-    linkSelRef.select('text.link-label').text((d) => isPartnerLabel(d.label) ? '' : d.label);
-    linkSelRef.select('text.link-heart').text((d) => isPartnerLabel(d.label) ? '♥' : '');
-    linkSelRef.classed('dim', (d) => !linkVisible(d));
-    linkSelRef.select('line.link-line').classed('active', linkTouchesSelection).classed('is-partner', (d) => isPartnerLabel(d.label));
+    linkSelRef.select('text.link-label').text((d) => d.labels.some(isPartnerLabel) ? '' : d.labels.join(' / '));
+    linkSelRef.select('text.link-heart').text((d) => d.labels.some(isPartnerLabel) ? '♥' : '');
+    linkSelRef.classed('dim', (d) => !(keyVisible(d.sourceKey) && keyVisible(d.targetKey)));
+    linkSelRef.select('line.link-line')
+      .classed('active', (d) => keyTouchesSelection(d.sourceKey) || keyTouchesSelection(d.targetKey))
+      .classed('is-partner', (d) => d.labels.some(isPartnerLabel));
 
-    const nodeSel = nodesLayer.selectAll('g.node-g').data(state.people, (d) => d.id);
+    // Sichtbare Knoten: verpartnerte Personen werden zu einem Herz-Knoten
+    // zusammengefasst (ein Eintrag pro gesperrtem Paar statt zwei Kreisen).
+    const pairKeysSeen = new Set();
+    const visualNodes = [];
+    state.people.forEach((p) => {
+      const partnerId = pairOfPerson.get(p.id);
+      if (partnerId) {
+        const key = [p.id, partnerId].sort().join('|');
+        if (pairKeysSeen.has(key)) return;
+        pairKeysSeen.add(key);
+        const [leftId, rightId] = key.split('|');
+        visualNodes.push({ id: 'pair:' + key, type: 'pair', a: personById(leftId), b: personById(rightId) });
+      } else {
+        visualNodes.push({ id: p.id, type: 'single', a: p });
+      }
+    });
+    function visualNodeVisible(d) { return d.type === 'pair' ? (nodeVisible(d.a) || nodeVisible(d.b)) : nodeVisible(d.a); }
+
+    const nodeSel = nodesLayer.selectAll('g.node-g').data(visualNodes, (d) => d.id);
     nodeSel.exit().remove();
     const nodeEnter = nodeSel.enter().append('g').attr('class', 'node-g').call(dragBehavior);
-    nodeEnter.append('circle').attr('class', 'node-circle').attr('r', NODE_R);
-    nodeEnter.append('text').attr('class', 'node-age').attr('text-anchor', 'middle').attr('dy', '0.32em');
-    nodeEnter.append('text').attr('class', 'node-label');
-    nodeEnter.on('click', (event, d) => { event.stopPropagation(); selectPerson(d.id); });
-    nodeEnter.on('dblclick', (event, d) => { event.stopPropagation(); d.fx = null; d.fy = null; simulation.alpha(0.4).restart(); scheduleSave(); });
+    nodeEnter.filter((d) => d.type === 'single').append('circle').attr('class', 'node-circle').attr('r', NODE_R);
+    nodeEnter.filter((d) => d.type === 'single').append('text').attr('class', 'node-age').attr('text-anchor', 'middle').attr('dy', '0.32em');
+    nodeEnter.filter((d) => d.type === 'pair').append('path').attr('class', 'heart-shape').attr('d', heartPath(NODE_R));
+    nodeEnter.append('text').attr('class', 'node-label').attr('text-anchor', (d) => d.type === 'pair' ? 'middle' : 'start');
+    nodeEnter.on('click', (event, d) => {
+      event.stopPropagation();
+      if (d.type === 'pair') {
+        const [lx] = d3.pointer(event, event.currentTarget);
+        selectPerson(lx < 0 ? d.a.id : d.b.id);
+      } else {
+        selectPerson(d.a.id);
+      }
+    });
+    nodeEnter.on('dblclick', (event, d) => {
+      event.stopPropagation();
+      d.a.fx = null; d.a.fy = null;
+      if (d.type === 'pair') { d.b.fx = null; d.b.fy = null; }
+      simulation.alpha(0.4).restart(); scheduleSave();
+    });
     nodeSelRef = nodeEnter.merge(nodeSel);
     nodeSelRef.select('circle.node-circle')
-      .attr('fill', (d) => categoryColor(d.categoryId))
-      .classed('selected', (d) => d.id === selectedPersonId);
+      .attr('fill', (d) => categoryColor(d.a.categoryId))
+      .classed('selected', (d) => d.a.id === selectedPersonId);
+    nodeSelRef.select('path.heart-shape')
+      .classed('selected', (d) => d.a.id === selectedPersonId || d.b.id === selectedPersonId);
     nodeSelRef.select('text.node-label')
-      .attr('dx', NODE_R + 6).attr('dy', 4)
-      .text((d) => d.name || '(ohne Namen)');
+      .attr('dx', (d) => d.type === 'pair' ? 0 : NODE_R + 6)
+      .attr('dy', (d) => d.type === 'pair' ? NODE_R * 1.6 + 14 : 4)
+      .text((d) => d.type === 'pair' ? `${d.a.name || '(ohne Namen)'} & ${d.b.name || '(ohne Namen)'}` : (d.a.name || '(ohne Namen)'));
     nodeSelRef.select('text.node-age')
       .text((d) => {
-        const age = d.birthDate ? ageFromBirthDate(d.birthDate) : null;
+        const age = d.a.birthDate ? ageFromBirthDate(d.a.birthDate) : null;
         return age != null ? age : '';
       });
-    nodeSelRef.classed('dim', (d) => !nodeVisible(d));
+    nodeSelRef.classed('dim', (d) => !visualNodeVisible(d));
 
     ticked();
   }
@@ -645,16 +750,33 @@
   function ticked() {
     if (linkSelRef) {
       linkSelRef.select('line.link-line')
-        .attr('x1', (d) => d.source.x).attr('y1', (d) => d.source.y)
-        .attr('x2', (d) => d.target.x).attr('y2', (d) => d.target.y);
-      linkSelRef.select('text.link-label')
-        .attr('x', (d) => (d.source.x + d.target.x) / 2)
-        .attr('y', (d) => (d.source.y + d.target.y) / 2 - 5);
-      linkSelRef.select('text.link-heart')
-        .attr('x', (d) => (d.source.x + d.target.x) / 2)
-        .attr('y', (d) => (d.source.y + d.target.y) / 2 + 4);
+        .attr('x1', (d) => positionOfKey(d.sourceKey).x).attr('y1', (d) => positionOfKey(d.sourceKey).y)
+        .attr('x2', (d) => positionOfKey(d.targetKey).x).attr('y2', (d) => positionOfKey(d.targetKey).y);
+      linkSelRef.select('text.link-label').attr('x', (d) => {
+        const s = positionOfKey(d.sourceKey), t = positionOfKey(d.targetKey);
+        return (s.x + t.x) / 2;
+      }).attr('y', (d) => {
+        const s = positionOfKey(d.sourceKey), t = positionOfKey(d.targetKey);
+        return (s.y + t.y) / 2 - 5;
+      });
+      linkSelRef.select('text.link-heart').attr('x', (d) => {
+        const s = positionOfKey(d.sourceKey), t = positionOfKey(d.targetKey);
+        return (s.x + t.x) / 2;
+      }).attr('y', (d) => {
+        const s = positionOfKey(d.sourceKey), t = positionOfKey(d.targetKey);
+        return (s.y + t.y) / 2 + 4;
+      });
     }
-    if (nodeSelRef) nodeSelRef.attr('transform', (d) => `translate(${d.x || 0},${d.y || 0})`);
+    if (nodeSelRef) {
+      nodeSelRef.attr('transform', (d) => {
+        if (d.type === 'pair') {
+          const x = ((d.a.x || 0) + (d.b.x || 0)) / 2;
+          const y = ((d.a.y || 0) + (d.b.y || 0)) / 2;
+          return `translate(${x},${y})`;
+        }
+        return `translate(${d.a.x || 0},${d.a.y || 0})`;
+      });
+    }
   }
 
   function selectPerson(id) {
@@ -909,9 +1031,10 @@
 
   // ------------------------------------------------------- bulk-erfassung
   // Für die Erfassung am PC: eine Person pro Zeile, "Name; Kategorie;
-  // Geburtstag" — Kategorie und Geburtstag optional. Nur im Desktop-Layout
-  // im Menü sichtbar (siehe .desktop-only-item in styles.css), da Copy-Paste
-  // und mehrzeilige Texteingabe am Handy unpraktisch sind.
+  // Geburtstag; Beziehungen" — alles ausser dem Namen optional. Nur im
+  // Desktop-Layout im Menü sichtbar (siehe .desktop-only-item in
+  // styles.css), da Copy-Paste und mehrzeilige Texteingabe am Handy
+  // unpraktisch sind.
   function parseBulkBirthDate(raw) {
     if (!raw) return null;
     let m = /^(\d{4})-(\d{2})-(\d{2})$/.exec(raw);
@@ -928,32 +1051,79 @@
     state.categories.push(cat);
     return cat.id;
   }
+  // Beziehungen werden als 4. Feld angegeben: "Beziehung: Zielname", mehrere
+  // durch Komma getrennt, z. B. "Partner/in: Anna Muster, Kind: Lisa Muster".
+  // Das Ziel kann eine bereits bestehende Person oder eine andere Zeile
+  // desselben Stapels sein. Personen mit einer Beziehung zueinander werden
+  // direkt nebeneinander platziert statt zufällig verteilt.
+  function parseBulkRelations(raw) {
+    return (raw || '').split(',').map((s) => s.trim()).filter(Boolean).map((spec) => {
+      const colonIdx = spec.indexOf(':');
+      if (colonIdx === -1) return null;
+      const label = spec.slice(0, colonIdx).trim();
+      const targetName = spec.slice(colonIdx + 1).trim();
+      if (!label || !targetName) return null;
+      return { label, targetName };
+    }).filter(Boolean);
+  }
   function importBulkPeople(text) {
     const lines = text.split('\n').map((l) => l.trim()).filter(Boolean);
-    let added = 0, skipped = 0;
-    lines.forEach((line) => {
-      const [namePart, categoryPart, birthPart] = line.split(';').map((s) => (s || '').trim());
+    const created = [];
+    let skipped = 0;
+    lines.forEach((line, idx) => {
+      const [namePart, categoryPart, birthPart, relPart] = line.split(';').map((s) => (s || '').trim());
       if (!namePart) { skipped++; return; }
-      state.people.push({
+      const person = {
         id: uid('p'),
         name: namePart,
         categoryId: findOrCreateCategoryByName(categoryPart),
         notes: '',
         birthDate: parseBulkBirthDate(birthPart),
-        x: (Math.random() - 0.5) * 60,
-        y: (Math.random() - 0.5) * 60
-      });
-      added++;
+        x: (idx % 6) * 70 + (Math.random() - 0.5) * 20,
+        y: Math.floor(idx / 6) * 90 + (Math.random() - 0.5) * 20
+      };
+      state.people.push(person);
+      created.push({ person, relSpecs: parseBulkRelations(relPart) });
     });
-    return { added, skipped };
+
+    function findTargetByName(name) {
+      const ql = name.toLowerCase();
+      const inBatch = created.find((c) => c.person.name.toLowerCase() === ql);
+      if (inBatch) return inBatch.person;
+      return state.people.find((p) => p.name.toLowerCase() === ql) || null;
+    }
+    function hasConnection(idA, idB) {
+      return state.connections.some((c) => (c.a === idA && c.b === idB) || (c.a === idB && c.b === idA));
+    }
+
+    let relationsAdded = 0, relationsSkipped = 0;
+    created.forEach(({ person, relSpecs }) => {
+      const targets = [];
+      relSpecs.forEach(({ label, targetName }) => {
+        const target = findTargetByName(targetName);
+        if (!target || target.id === person.id) { relationsSkipped++; return; }
+        if (!hasConnection(person.id, target.id)) {
+          state.connections.push({ id: uid('e'), a: person.id, b: target.id, label });
+          relationsAdded++;
+          if (isChildLabel(label)) ensureChildLinkedToPartners(person.id, target.id, label);
+        }
+        targets.push(target);
+      });
+      if (targets.length) {
+        person.x = targets.reduce((sum, t) => sum + (t.x || 0), 0) / targets.length + (Math.random() - 0.5) * 40;
+        person.y = targets.reduce((sum, t) => sum + (t.y || 0), 0) / targets.length + (Math.random() - 0.5) * 40;
+      }
+    });
+
+    return { added: created.length, skipped, relationsAdded, relationsSkipped };
   }
   function renderBulkModal() {
     document.getElementById('modal-content').innerHTML = `
       <h2>Mehrere Personen erfassen</h2>
-      <p class="auth-hint">Eine Person pro Zeile: <strong>Name; Kategorie; Geburtstag</strong>. Kategorie und Geburtstag sind optional (Geburtstag als JJJJ-MM-TT oder TT.MM.JJJJ). Unbekannte Kategorien werden automatisch angelegt.</p>
+      <p class="auth-hint">Eine Person pro Zeile: <strong>Name; Kategorie; Geburtstag; Beziehungen</strong>. Alles ausser dem Namen ist optional (Geburtstag als JJJJ-MM-TT oder TT.MM.JJJJ). Beziehungen als «Beziehung: Name» angeben, mehrere durch Komma trennen — das Ziel kann eine bestehende Person oder eine andere Zeile hier sein. Verbundene Personen werden direkt nebeneinander platziert; unbekannte Kategorien werden automatisch angelegt.</p>
       <textarea id="bulk-textarea" rows="10" placeholder="Anna Muster; Freundin; 1990-04-12
-Peter Beispiel; Kollege
-Lisa Nachbarin"></textarea>
+Peter Beispiel; Kollege; ; Partner/in: Anna Muster
+Lisa Muster; ; 2015-06-01; Kind: Anna Muster, Kind: Peter Beispiel"></textarea>
       <div style="margin-top:18px; display:flex; justify-content:flex-end; gap:10px;">
         <button class="btn btn-ghost" id="modal-close">Abbrechen</button>
         <button class="btn btn-primary" id="btn-bulk-submit">Personen anlegen</button>
@@ -961,11 +1131,14 @@ Lisa Nachbarin"></textarea>
     document.getElementById('modal-close').addEventListener('click', closeModal);
     document.getElementById('bulk-textarea').focus();
     document.getElementById('btn-bulk-submit').addEventListener('click', () => {
-      const { added, skipped } = importBulkPeople(document.getElementById('bulk-textarea').value);
+      const { added, skipped, relationsAdded, relationsSkipped } = importBulkPeople(document.getElementById('bulk-textarea').value);
       closeModal();
       if (added > 0) { renderAll(true); scheduleSave(true); }
+      const skippedTotal = skipped + relationsSkipped;
       showToast(added > 0
-        ? `${added} ${added === 1 ? 'Person' : 'Personen'} hinzugefügt${skipped ? `, ${skipped} Zeile(n) übersprungen` : ''}.`
+        ? `${added} ${added === 1 ? 'Person' : 'Personen'} hinzugefügt` +
+          (relationsAdded ? `, ${relationsAdded} ${relationsAdded === 1 ? 'Beziehung' : 'Beziehungen'} angelegt` : '') +
+          (skippedTotal ? ` (${skippedTotal} übersprungen)` : '') + '.'
         : 'Keine Personen erkannt.');
     });
   }

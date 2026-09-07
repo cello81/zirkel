@@ -234,6 +234,8 @@ input[type="color"] { width: 36px; height: 32px; padding: 2px; border-radius: 6p
 .link-heart { font-size: 13px; fill: var(--heart); paint-order: stroke; stroke: var(--bg); stroke-width: 3px; pointer-events: none; }
 .node-circle { stroke: var(--bg); stroke-width: 2px; cursor: pointer; }
 .node-circle.selected { stroke: var(--accent); stroke-width: 3px; }
+.heart-shape { fill: var(--heart); stroke: var(--bg); stroke-width: 2px; cursor: pointer; }
+.heart-shape.selected { stroke: var(--accent); stroke-width: 3px; }
 .node-g.dim { opacity: 0.22; }
 .link-g.dim { opacity: 0.15; }
 
