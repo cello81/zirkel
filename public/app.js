@@ -18,6 +18,36 @@
   let saving = false;
   let saveTimer = null;
 
+  // ------------------------------------------------------- install prompt
+  // Wird als installierbare PWA betrieben; das Ereignis kann jederzeit
+  // (auch schon vor dem Login) feuern, deshalb ganz oben und ausserhalb
+  // jeder Funktion registrieren, damit nichts verpasst wird.
+  let deferredInstallPrompt = null;
+  function isStandaloneDisplay() {
+    return window.matchMedia('(display-mode: standalone)').matches || window.navigator.standalone === true;
+  }
+  function isIOS() {
+    return /iphone|ipad|ipod/i.test(navigator.userAgent) && !window.MSStream;
+  }
+  function maybeShowInstallBanner() {
+    const banner = document.getElementById('install-banner');
+    if (!banner) return; // App-Shell noch nicht eingefuegt (nicht eingeloggt)
+    if (isStandaloneDisplay()) return;
+    if (localStorage.getItem('zirkel-install-dismissed') === '1') return;
+    if (deferredInstallPrompt || isIOS()) banner.hidden = false;
+  }
+  window.addEventListener('beforeinstallprompt', (e) => {
+    e.preventDefault();
+    deferredInstallPrompt = e;
+    maybeShowInstallBanner();
+  });
+  window.addEventListener('appinstalled', () => {
+    deferredInstallPrompt = null;
+    const banner = document.getElementById('install-banner');
+    if (banner) banner.hidden = true;
+    showToast('Zirkel wurde installiert.');
+  });
+
   // -------------------------------------------------------------- helpers
   function uid(prefix) {
     return prefix + '-' + Math.random().toString(36).slice(2, 9) + Date.now().toString(36).slice(-4);
@@ -108,9 +138,122 @@
     localStorage.setItem('zirkel-theme', next);
   }
 
+  // ------------------------------------------------ app shell (nach Login)
+  // Der komplette Inhalt der eigentlichen App wird bewusst NICHT im
+  // ausgelieferten HTML mitgeschickt, sondern erst per JS eingefuegt, nachdem
+  // eine gueltige Session bestaetigt wurde (startApp()). So steht im
+  // ausgeloggten Zustand (z. B. im "View Source" oder bei einem Crawler, der
+  // robots.txt ignoriert) nichts ueber Zweck/Inhalt der App im Dokument.
+  const APP_SHELL_HTML = `
+    <header class="topbar">
+      <button id="btn-sidebar-toggle" class="btn btn-ghost sidebar-toggle" aria-label="Personenliste">☰</button>
+      <div class="brand">
+        <svg class="brand-mark" viewBox="0 0 48 48" aria-hidden="true">
+          <circle cx="24" cy="24" r="21" fill="none" stroke="currentColor" stroke-width="2.4" opacity="0.35"/>
+          <circle cx="24" cy="12" r="4" fill="currentColor"/>
+          <circle cx="13" cy="31" r="4" fill="currentColor"/>
+          <circle cx="35" cy="31" r="4" fill="currentColor"/>
+          <path d="M24 16 L15 27.5 M24 16 L33 27.5 M17 31 H31" stroke="currentColor" stroke-width="1.6" opacity="0.6"/>
+        </svg>
+        <span class="brand-name">Zirkel</span>
+      </div>
+
+      <div class="search-wrap">
+        <svg class="search-icon" viewBox="0 0 20 20" aria-hidden="true"><circle cx="9" cy="9" r="6" fill="none" stroke="currentColor" stroke-width="1.8"/><path d="M14 14 L18 18" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/></svg>
+        <input id="search" type="search" placeholder="Namen suchen… ( / )" autocomplete="off" aria-label="Namen suchen">
+      </div>
+
+      <div class="topbar-actions">
+        <span id="save-status" class="save-status" data-state="saved">Gespeichert</span>
+        <button id="btn-add-person" class="btn btn-primary">+ Person</button>
+        <div class="menu-wrap">
+          <button id="btn-menu" class="btn btn-ghost" aria-haspopup="true" aria-expanded="false">⋯</button>
+          <div id="menu-dropdown" class="menu-dropdown" hidden>
+            <button type="button" data-action="categories">Kategorien verwalten</button>
+            <button type="button" data-action="export">Als JSON exportieren</button>
+            <label class="menu-item-file">Aus JSON importieren<input id="import-file" type="file" accept="application/json" hidden></label>
+            <button type="button" data-action="theme">Hell / Dunkel umschalten</button>
+            <button type="button" data-action="account">Konto &amp; Passwort</button>
+            <hr>
+            <button type="button" data-action="logout">Abmelden</button>
+          </div>
+        </div>
+      </div>
+    </header>
+
+    <div id="update-banner" class="update-banner" hidden>
+      <span>Es gibt eine neue Version von Zirkel.</span>
+      <button id="btn-update-reload" class="btn btn-primary btn-small">Neu laden</button>
+    </div>
+
+    <div id="install-banner" class="update-banner install-banner" hidden>
+      <span>Zirkel laesst sich als App installieren - fuer schnelleren Zugriff.</span>
+      <button id="btn-install" class="btn btn-primary btn-small">Installieren</button>
+      <button id="btn-install-dismiss" class="btn btn-ghost btn-small">Spaeter</button>
+    </div>
+
+    <div class="layout">
+      <div id="sidebar-scrim" class="sidebar-scrim"></div>
+      <aside class="sidebar" id="sidebar">
+        <div class="sidebar-stats" id="sidebar-stats"></div>
+        <div class="legend" id="legend"></div>
+        <div class="people-list" id="people-list"></div>
+        <div class="empty-state" id="empty-state" hidden>
+          <p>Noch keine Personen im Netzwerk.</p>
+          <button class="btn btn-primary" id="btn-add-first">Erste Person hinzufuegen</button>
+        </div>
+      </aside>
+
+      <main class="canvas-wrap">
+        <svg id="graph"></svg>
+        <div class="canvas-hint">Ziehen zum Verschieben · Scrollen zum Zoomen</div>
+        <div class="canvas-empty" id="canvas-empty" hidden>
+          <p>Euer Netzwerk ist noch leer.</p>
+        </div>
+      </main>
+    </div>
+
+    <aside class="drawer" id="drawer" hidden>
+      <div id="drawer-content"></div>
+    </aside>
+
+    <div class="modal-overlay" id="modal-overlay" hidden>
+      <div class="modal" id="modal-content" role="dialog" aria-modal="true"></div>
+    </div>
+
+    <div class="toast" id="toast" hidden></div>
+
+    <datalist id="relationship-types">
+      <option value="Partner/in">
+      <option value="Kind">
+      <option value="Elternteil">
+      <option value="Geschwister">
+      <option value="Grosseltern">
+      <option value="Enkel/in">
+      <option value="Cousin/Cousine">
+      <option value="Freund/in">
+      <option value="Kolleg/in">
+      <option value="Chef/in">
+      <option value="Nachbar/in">
+      <option value="Bekannte/r">
+      <option value="Mentor/in">
+    </datalist>`;
+
+  function ensureAppShell() {
+    let appEl = document.getElementById('app');
+    if (appEl) return appEl;
+    appEl = document.createElement('div');
+    appEl.id = 'app';
+    appEl.hidden = true;
+    appEl.innerHTML = APP_SHELL_HTML;
+    document.body.appendChild(appEl);
+    return appEl;
+  }
+
   // ---------------------------------------------------------- auth screen
   async function initAuthScreen(prefillError) {
-    document.getElementById('app').hidden = true;
+    const appEl = document.getElementById('app');
+    if (appEl) appEl.hidden = true;
     document.getElementById('auth-screen').hidden = false;
     let setup = { userCount: 2, canRegister: false };
     try {
@@ -193,11 +336,13 @@
 
   // ------------------------------------------------------------ app boot
   async function startApp() {
+    ensureAppShell();
     document.getElementById('auth-screen').hidden = true;
     document.getElementById('app').hidden = false;
     await loadNetwork();
     wireAppEventsOnce();
     initServiceWorker();
+    maybeShowInstallBanner();
     // Kein staendiges Polling - die Ansicht wird beim Oeffnen (Start, erneutes
     // Sichtbarwerden des Tabs bzw. Fokus, z. B. nach dem Wechsel zur App) neu geladen.
     document.addEventListener('visibilitychange', () => { if (!document.hidden) backgroundRefresh(); });
@@ -455,6 +600,7 @@
     nodeSel.exit().remove();
     const nodeEnter = nodeSel.enter().append('g').attr('class', 'node-g').call(dragBehavior);
     nodeEnter.append('circle').attr('class', 'node-circle').attr('r', NODE_R);
+    nodeEnter.append('text').attr('class', 'node-age').attr('text-anchor', 'middle').attr('dy', '0.32em');
     nodeEnter.append('text').attr('class', 'node-label');
     nodeEnter.on('click', (event, d) => { event.stopPropagation(); selectPerson(d.id); });
     nodeEnter.on('dblclick', (event, d) => { event.stopPropagation(); d.fx = null; d.fy = null; simulation.alpha(0.4).restart(); scheduleSave(); });
@@ -465,6 +611,11 @@
     nodeSelRef.select('text.node-label')
       .attr('dx', NODE_R + 6).attr('dy', 4)
       .text((d) => d.name || '(ohne Namen)');
+    nodeSelRef.select('text.node-age')
+      .text((d) => {
+        const age = d.birthDate ? ageFromBirthDate(d.birthDate) : null;
+        return age != null ? age : '';
+      });
     nodeSelRef.classed('dim', (d) => !nodeVisible(d));
 
     ticked();
@@ -536,8 +687,10 @@
           <div class="add-conn-row">
             <select id="conn-person-select">
               <option value="">Person waehlen…</option>
+              <option value="__new__">+ Neue Person…</option>
               ${candidates.map((o) => `<option value="${o.id}">${escapeHtml(o.name)}</option>`).join('')}
             </select>
+            <input type="text" id="conn-new-name" placeholder="Name der neuen Person" hidden>
             <input type="text" id="conn-label-input" placeholder="Beziehung (optional)" list="relationship-types">
             <button class="btn btn-primary btn-small" id="btn-add-conn">+ Verbindung</button>
           </div>
@@ -580,13 +733,27 @@
         renderStats(); renderGraph(true); renderDrawer(id); scheduleSave(true);
       });
     });
+    const connPersonSelect = document.getElementById('conn-person-select');
+    const connNewNameInput = document.getElementById('conn-new-name');
+    connPersonSelect.addEventListener('change', () => {
+      const isNew = connPersonSelect.value === '__new__';
+      connNewNameInput.hidden = !isNew;
+      if (isNew) connNewNameInput.focus();
+    });
     document.getElementById('btn-add-conn').addEventListener('click', () => {
-      const sel = document.getElementById('conn-person-select');
-      const otherId = sel.value;
-      if (!otherId) return;
+      const sel = connPersonSelect.value;
       const label = document.getElementById('conn-label-input').value.trim();
+      let otherId = sel;
+      if (sel === '__new__') {
+        const name = connNewNameInput.value.trim();
+        if (!name) { connNewNameInput.focus(); return; }
+        const newP = { id: uid('p'), name, categoryId: p.categoryId || null, notes: '', birthDate: null, x: (p.x || 0) + (Math.random() - 0.5) * 60, y: (p.y || 0) + (Math.random() - 0.5) * 60 };
+        state.people.push(newP);
+        otherId = newP.id;
+      }
+      if (!otherId || otherId === '__new__') return;
       state.connections.push({ id: uid('e'), a: id, b: otherId, label });
-      renderStats(); renderGraph(true); renderDrawer(id); scheduleSave(true);
+      renderAll(true); scheduleSave(true);
     });
     wireDangerButton(document.getElementById('btn-delete-person'), 'Person loeschen', 'Wirklich loeschen?', () => {
       state.people = state.people.filter((x) => x.id !== id);
@@ -826,6 +993,21 @@
       userInitiatedSwUpdate = true;
       if (swRegistration && swRegistration.waiting) swRegistration.waiting.postMessage('SKIP_WAITING');
       else window.location.reload();
+    });
+
+    document.getElementById('btn-install').addEventListener('click', async () => {
+      if (deferredInstallPrompt) {
+        deferredInstallPrompt.prompt();
+        try { await deferredInstallPrompt.userChoice; } catch (e) {}
+        deferredInstallPrompt = null;
+        document.getElementById('install-banner').hidden = true;
+      } else if (isIOS()) {
+        showToast('Installieren: Teilen-Symbol antippen, dann "Zum Home-Bildschirm".');
+      }
+    });
+    document.getElementById('btn-install-dismiss').addEventListener('click', () => {
+      document.getElementById('install-banner').hidden = true;
+      localStorage.setItem('zirkel-install-dismissed', '1');
     });
 
     const sidebarToggle = document.getElementById('btn-sidebar-toggle');
