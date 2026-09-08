@@ -96,17 +96,44 @@
     if (!hadBirthdayThisYear) age -= 1;
     return age;
   }
+  function ageAtDate(birthIso, atIso) {
+    const b = parseBirthDate(birthIso);
+    const a = parseBirthDate(atIso);
+    if (!b || !a) return null;
+    let age = a.year - b.year;
+    const hadBirthday = (a.month > b.month) || (a.month === b.month && a.day >= b.day);
+    if (!hadBirthday) age -= 1;
+    return age;
+  }
+  // Bei Verstorbenen zeigen wir das Alter beim Tod statt des (irreführenden)
+  // aktuellen Alters — ohne bekanntes Todesdatum wird gar keine Zahl gezeigt.
+  function displayAge(p) {
+    if (!p.birthDate) return null;
+    if (p.deceased) return p.deathDate ? ageAtDate(p.birthDate, p.deathDate) : null;
+    return ageFromBirthDate(p.birthDate);
+  }
+  function displayName(p) {
+    const name = p.name || '(ohne Namen)';
+    return p.deceased ? `✝ ${name}` : name;
+  }
   function matchesSearch(p, q) {
     const query = q.toLowerCase();
     return (p.name || '').toLowerCase().includes(query) ||
       categoryName(p.categoryId).toLowerCase().includes(query) ||
       (p.notes || '').toLowerCase().includes(query) ||
       formatBirthday(p.birthDate, true).toLowerCase().includes(query) ||
-      (p.birthDate || '').includes(query);
+      (p.birthDate || '').includes(query) ||
+      (p.deathDate || '').includes(query);
   }
   function metaLine(p) {
     const parts = [categoryName(p.categoryId)];
-    if (p.birthDate) parts.push(formatBirthday(p.birthDate, false));
+    if (p.deceased) {
+      const by = p.birthDate ? parseBirthDate(p.birthDate).year : null;
+      const dy = p.deathDate ? parseBirthDate(p.deathDate).year : null;
+      parts.push(by || dy ? `${by || '?'}–${dy || '?'}` : 'verstorben');
+    } else if (p.birthDate) {
+      parts.push(formatBirthday(p.birthDate, false));
+    }
     return parts.join(' · ');
   }
   function connectionsFor(personId) {
@@ -132,6 +159,34 @@
       const alreadyLinked = state.connections.some((c) =>
         (c.a === partnerId && c.b === childId) || (c.a === childId && c.b === partnerId));
       if (!alreadyLinked) state.connections.push({ id: uid('e'), a: partnerId, b: childId, label });
+    });
+  }
+  function parentsOf(personId) {
+    return state.connections
+      .filter((c) => isChildLabel(c.label) && (c.a === personId || c.b === personId))
+      .map((c) => otherPersonInConnection(c, personId));
+  }
+  // Geschwister-Erkennung: sobald zwei Personen dieselben (mindestens zwei)
+  // Elternteile eingetragen haben, wird automatisch eine Geschwister-
+  // Verbindung ergänzt (nur wenn noch gar keine Verbindung zwischen ihnen
+  // besteht, damit bestehende, abweichende Angaben nicht überschrieben werden).
+  function ensureSiblingLinks() {
+    const childrenByParentPair = new Map();
+    state.people.forEach((p) => {
+      const parents = parentsOf(p.id);
+      if (parents.length < 2) return;
+      const key = parents.slice().sort().join('|');
+      if (!childrenByParentPair.has(key)) childrenByParentPair.set(key, []);
+      childrenByParentPair.get(key).push(p.id);
+    });
+    childrenByParentPair.forEach((childIds) => {
+      for (let i = 0; i < childIds.length; i++) {
+        for (let j = i + 1; j < childIds.length; j++) {
+          const a = childIds[i], b = childIds[j];
+          const exists = state.connections.some((c) => (c.a === a && c.b === b) || (c.a === b && c.b === a));
+          if (!exists) state.connections.push({ id: uid('e'), a, b, label: 'Geschwister' });
+        }
+      }
     });
   }
 
@@ -521,7 +576,7 @@
       <button type="button" class="person-row ${p.id === selectedPersonId ? 'selected' : ''}" data-id="${p.id}">
         <span class="avatar" style="background:${categoryColor(p.categoryId)}">${escapeHtml((p.name || '?').trim().charAt(0).toUpperCase() || '?')}</span>
         <span class="meta">
-          <span class="name">${highlightMatch(p.name || '(ohne Namen)', searchQuery)}</span>
+          <span class="name">${highlightMatch(displayName(p), searchQuery)}</span>
           <span class="cat">${escapeHtml(metaLine(p))}</span>
         </span>
       </button>`).join('');
@@ -711,6 +766,10 @@
     nodeEnter.filter((d) => d.type === 'single').append('circle').attr('class', 'node-circle').attr('r', NODE_R);
     nodeEnter.filter((d) => d.type === 'single').append('text').attr('class', 'node-age').attr('text-anchor', 'middle').attr('dy', '0.32em');
     nodeEnter.filter((d) => d.type === 'pair').append('path').attr('class', 'heart-shape').attr('d', heartPath(NODE_R));
+    nodeEnter.filter((d) => d.type === 'pair').append('text').attr('class', 'node-age-half node-age-a').attr('text-anchor', 'middle')
+      .attr('dx', -NODE_R * 0.55).attr('dy', NODE_R * 0.15 + 4);
+    nodeEnter.filter((d) => d.type === 'pair').append('text').attr('class', 'node-age-half node-age-b').attr('text-anchor', 'middle')
+      .attr('dx', NODE_R * 0.55).attr('dy', NODE_R * 0.15 + 4);
     nodeEnter.append('text').attr('class', 'node-label').attr('text-anchor', (d) => d.type === 'pair' ? 'middle' : 'start');
     nodeEnter.on('click', (event, d) => {
       event.stopPropagation();
@@ -730,18 +789,20 @@
     nodeSelRef = nodeEnter.merge(nodeSel);
     nodeSelRef.select('circle.node-circle')
       .attr('fill', (d) => categoryColor(d.a.categoryId))
-      .classed('selected', (d) => d.a.id === selectedPersonId);
+      .classed('selected', (d) => d.a.id === selectedPersonId)
+      .classed('deceased', (d) => !!d.a.deceased);
     nodeSelRef.select('path.heart-shape')
       .classed('selected', (d) => d.a.id === selectedPersonId || d.b.id === selectedPersonId);
     nodeSelRef.select('text.node-label')
       .attr('dx', (d) => d.type === 'pair' ? 0 : NODE_R + 6)
       .attr('dy', (d) => d.type === 'pair' ? NODE_R * 1.6 + 14 : 4)
-      .text((d) => d.type === 'pair' ? `${d.a.name || '(ohne Namen)'} & ${d.b.name || '(ohne Namen)'}` : (d.a.name || '(ohne Namen)'));
+      .text((d) => d.type === 'pair' ? `${displayName(d.a)} & ${displayName(d.b)}` : displayName(d.a));
     nodeSelRef.select('text.node-age')
-      .text((d) => {
-        const age = d.a.birthDate ? ageFromBirthDate(d.a.birthDate) : null;
-        return age != null ? age : '';
-      });
+      .text((d) => { const age = displayAge(d.a); return age != null ? age : ''; });
+    nodeSelRef.select('text.node-age-a')
+      .text((d) => { const age = displayAge(d.a); return age != null ? age : ''; });
+    nodeSelRef.select('text.node-age-b')
+      .text((d) => { const age = displayAge(d.b); return age != null ? age : ''; });
     nodeSelRef.classed('dim', (d) => !visualNodeVisible(d));
 
     ticked();
@@ -808,7 +869,9 @@
       <div class="drawer-header"><h2>Person</h2><button class="drawer-close" id="drawer-close" aria-label="Schliessen">×</button></div>
       <div class="drawer-body">
         <label class="field"><span>Name</span><input type="text" id="f-name" value="${escapeHtml(p.name)}" placeholder="Name"></label>
-        <label class="field"><span>Geburtstag <span class="field-hint" id="f-birthdate-hint">${p.birthDate && ageFromBirthDate(p.birthDate) != null ? `(${ageFromBirthDate(p.birthDate)} Jahre)` : ''}</span></span><input type="date" id="f-birthdate" value="${p.birthDate || ''}" max="${new Date().toISOString().slice(0, 10)}"></label>
+        <label class="field"><span>Geburtstag <span class="field-hint" id="f-birthdate-hint">${p.birthDate && displayAge(p) != null ? `(${displayAge(p)} Jahre)` : ''}</span></span><input type="date" id="f-birthdate" value="${p.birthDate || ''}" max="${new Date().toISOString().slice(0, 10)}"></label>
+        <label class="check"><input type="checkbox" id="f-deceased" ${p.deceased ? 'checked' : ''}><span>Verstorben</span></label>
+        <label class="field" id="f-deathdate-wrap" ${p.deceased ? '' : 'hidden'}><span>Todesdatum (optional)</span><input type="date" id="f-deathdate" value="${p.deathDate || ''}" max="${new Date().toISOString().slice(0, 10)}"></label>
         <label class="field"><span>Kategorie</span>
           <select id="f-category">
             <option value="">Keine Kategorie</option>
@@ -851,7 +914,20 @@
       p.birthDate = e.target.value || null;
       renderPeopleList(); scheduleSave();
       const hint = document.getElementById('f-birthdate-hint');
-      if (hint) hint.textContent = (p.birthDate && ageFromBirthDate(p.birthDate) != null) ? `(${ageFromBirthDate(p.birthDate)} Jahre)` : '';
+      if (hint) hint.textContent = (p.birthDate && displayAge(p) != null) ? `(${displayAge(p)} Jahre)` : '';
+    });
+    document.getElementById('f-deceased').addEventListener('change', (e) => {
+      p.deceased = e.target.checked;
+      if (!p.deceased) p.deathDate = null;
+      renderPeopleList(); renderGraph(false); scheduleSave();
+      renderDrawer(id);
+    });
+    const deathdateEl = document.getElementById('f-deathdate');
+    if (deathdateEl) deathdateEl.addEventListener('change', (e) => {
+      p.deathDate = e.target.value || null;
+      renderPeopleList(); renderGraph(false); scheduleSave();
+      const hint = document.getElementById('f-birthdate-hint');
+      if (hint) hint.textContent = (p.birthDate && displayAge(p) != null) ? `(${displayAge(p)} Jahre)` : '';
     });
     document.getElementById('f-category').addEventListener('change', (e) => {
       p.categoryId = e.target.value || null;
@@ -872,6 +948,7 @@
         c.label = e.target.value;
         if (isChildLabel(c.label)) {
           ensureChildLinkedToPartners(id, otherPersonInConnection(c, id), c.label);
+          ensureSiblingLinks();
           renderAll(true); scheduleSave(true); return;
         }
         renderGraph(false); scheduleSave();
@@ -933,12 +1010,12 @@
       if (createNew || !otherId) {
         const name = personSearchInput.value.trim();
         if (!name) { personSearchInput.focus(); return; }
-        const newP = { id: uid('p'), name, categoryId: p.categoryId || null, notes: '', birthDate: null, x: (p.x || 0) + (Math.random() - 0.5) * 60, y: (p.y || 0) + (Math.random() - 0.5) * 60 };
+        const newP = { id: uid('p'), name, categoryId: p.categoryId || null, notes: '', birthDate: null, deceased: false, deathDate: null, x: (p.x || 0) + (Math.random() - 0.5) * 60, y: (p.y || 0) + (Math.random() - 0.5) * 60 };
         state.people.push(newP);
         otherId = newP.id;
       }
       state.connections.push({ id: uid('e'), a: id, b: otherId, label });
-      if (isChildLabel(label)) ensureChildLinkedToPartners(id, otherId, label);
+      if (isChildLabel(label)) { ensureChildLinkedToPartners(id, otherId, label); ensureSiblingLinks(); }
       renderAll(true); scheduleSave(true);
     }
     document.getElementById('btn-add-conn').addEventListener('click', () => addConnection(false));
@@ -1079,6 +1156,8 @@
         categoryId: findOrCreateCategoryByName(categoryPart),
         notes: '',
         birthDate: parseBulkBirthDate(birthPart),
+        deceased: false,
+        deathDate: null,
         x: (idx % 6) * 70 + (Math.random() - 0.5) * 20,
         y: Math.floor(idx / 6) * 90 + (Math.random() - 0.5) * 20
       };
@@ -1114,6 +1193,7 @@
         person.y = targets.reduce((sum, t) => sum + (t.y || 0), 0) / targets.length + (Math.random() - 0.5) * 40;
       }
     });
+    ensureSiblingLinks();
 
     return { added: created.length, skipped, relationsAdded, relationsSkipped };
   }
@@ -1252,7 +1332,7 @@ Lisa Muster; ; 2015-06-01; Kind: Anna Muster, Kind: Peter Beispiel"></textarea>
     }, 80));
 
     function newPerson() {
-      const p = { id: uid('p'), name: '', categoryId: null, notes: '', birthDate: null, x: (Math.random() - 0.5) * 60, y: (Math.random() - 0.5) * 60 };
+      const p = { id: uid('p'), name: '', categoryId: null, notes: '', birthDate: null, deceased: false, deathDate: null, x: (Math.random() - 0.5) * 60, y: (Math.random() - 0.5) * 60 };
       state.people.push(p);
       renderAll(true);
       selectPerson(p.id);

@@ -225,7 +225,8 @@ input[type="color"] { width: 36px; height: 32px; padding: 2px; border-radius: 6p
 .canvas-empty { position: absolute; inset: 0; display: grid; place-items: center; color: var(--text-dim); font-size: 1rem; }
 
 .node-label { font-family: var(--font-body); font-size: 11px; fill: var(--text); paint-order: stroke; stroke: var(--bg); stroke-width: 3px; pointer-events: none; }
-.node-age { font-family: var(--font-body); font-size: 10px; font-weight: 600; fill: #fff; paint-order: stroke; stroke: rgba(0,0,0,0.45); stroke-width: 2px; pointer-events: none; }
+.node-age, .node-age-half { font-family: var(--font-body); font-size: 10px; font-weight: 600; fill: #fff; paint-order: stroke; stroke: rgba(0,0,0,0.45); stroke-width: 2px; pointer-events: none; }
+.node-age-half { font-size: 9px; }
 .link-line { stroke: var(--border); stroke-width: 1.6px; }
 .link-line.active { stroke: var(--accent); stroke-width: 2.2px; }
 .link-line.is-partner { stroke: var(--heart); stroke-width: 2.2px; opacity: 0.75; }
@@ -234,6 +235,7 @@ input[type="color"] { width: 36px; height: 32px; padding: 2px; border-radius: 6p
 .link-heart { font-size: 13px; fill: var(--heart); paint-order: stroke; stroke: var(--bg); stroke-width: 3px; pointer-events: none; }
 .node-circle { stroke: var(--bg); stroke-width: 2px; cursor: pointer; }
 .node-circle.selected { stroke: var(--accent); stroke-width: 3px; }
+.node-circle.deceased { opacity: 0.5; stroke-dasharray: 3 2; }
 .heart-shape { fill: var(--heart); stroke: var(--bg); stroke-width: 2px; cursor: pointer; }
 .heart-shape.selected { stroke: var(--accent); stroke-width: 3px; }
 .node-g.dim { opacity: 0.22; }
