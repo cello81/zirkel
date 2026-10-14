@@ -32,7 +32,7 @@ bg = (18, 20, 28, 255)      # --bg dark
 ring = (232, 163, 61, 90)   # accent, faint ring
 dot = (232, 163, 61, 255)   # accent, solid nodes
 
-draw_mark(192, bg, ring, dot).save("public/icons/icon-192.png")
-draw_mark(512, bg, ring, dot).save("public/icons/icon-512.png")
-draw_mark(512, bg, ring, dot, maskable=True).save("public/icons/icon-maskable-512.png")
+draw_mark(192, bg, ring, dot).save("public/app-icons/icon-192.png")
+draw_mark(512, bg, ring, dot).save("public/app-icons/icon-512.png")
+draw_mark(512, bg, ring, dot, maskable=True).save("public/app-icons/icon-maskable-512.png")
 print("icons written")

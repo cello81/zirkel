@@ -167,7 +167,7 @@ public/                 <- Dokumentenstamm (Document Root)
   manifest.webmanifest    PWA-Manifest
   sw.js                   Service Worker (Offline-Huelle + Update-Check)
   vendor/d3.min.js         Lokal eingebundenes D3.js (kein externes CDN)
-  icons/                   App-Icons
+  app-icons/               App-Icons (nicht "icons/": Apache belegt /icons/ global)
   robots.txt               Verbietet Crawlern den ganzen Auftritt
   .htaccess                X-Robots-Tag-Header (mod_headers)
   api/                     PHP-Endpunkte (Login, Konto, Netzwerk-Daten)

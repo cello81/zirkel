@@ -1,7 +1,7 @@
 // Zirkel Service Worker
 // Versionsnummer bei jedem Deploy erhoehen, damit installierte Apps das
 // Update erkennen (siehe README "Updates ausliefern").
-const APP_VERSION = 'v9';
+const APP_VERSION = 'v10';
 const CACHE_NAME = 'zirkel-shell-' + APP_VERSION;
 
 const SHELL_ASSETS = [
@@ -11,9 +11,9 @@ const SHELL_ASSETS = [
   '/styles.css',
   '/vendor/d3.min.js',
   '/manifest.webmanifest',
-  '/icons/icon-192.png',
-  '/icons/icon-512.png',
-  '/icons/icon-maskable-512.png'
+  '/app-icons/icon-192.png',
+  '/app-icons/icon-512.png',
+  '/app-icons/icon-maskable-512.png'
 ];
 
 self.addEventListener('install', (event) => {
