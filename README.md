@@ -127,6 +127,24 @@ solange man nicht angemeldet ist:
 ## Sicherheits-Hinweise
 
 - Maximal zwei Konten — die Registrierung schliesst sich danach von selbst.
+  Das zweite Konto braucht einen **Einladungscode**, den das erste Konto
+  unter «Konto & Passwort» sieht (liegt in `data/config.json`). Wer nur die
+  URL kennt, kann sich so nicht als zweite Person eintragen.
+- Ein Passwortwechsel meldet alle anderen Geräte ab; «Auf allen Geräten
+  abmelden» im Konto-Dialog beendet sämtliche Sitzungen.
+- Daten vom Server und aus dem JSON-Import werden vor der Anzeige
+  normalisiert (IDs, Farben, Datumsangaben), um gespeichertes XSS zu verhindern.
+- `public/.htaccess` setzt CSP (nur eigene Origin), `X-Frame-Options`, HSTS und
+  weitere Security-Header; die API prüft bei POST `Origin`/`Sec-Fetch-Site`
+  (CSRF) und verlangt `Content-Type: application/json`.
+- Login-Versuche werden pro IP+Benutzer, pro IP und pro Benutzer gezählt;
+  auch Passwortwechsel und Registrierung sind begrenzt. Passwörter: 8–72 Zeichen.
+- Der Server bereinigt Netzwerkdaten beim Speichern (bekannte Felder, Längen,
+  Maximalzahlen, max. 2 MB). Falls eine Speicherung mit «ungültiges Format»
+  scheitert, ist ein Limit überschritten (5000 Personen, 20000 Verbindungen).
+- `data/` enthält eine automatisch angelegte `.htaccess` («Require all denied»);
+  neue Dateien werden mit Rechten 0600 angelegt. Bereits bestehende Dateien
+  einmalig per `chmod 600 data/*.json` nachziehen.
 - Login-Versuche sind pro IP/Benutzername begrenzt (10 pro 15 Minuten).
 - Passwoerter brauchen mindestens 8 Zeichen und werden mit bcrypt (PHPs
   `password_hash`) gehasht gespeichert, nie im Klartext.

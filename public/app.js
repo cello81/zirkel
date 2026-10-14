@@ -10,6 +10,7 @@
   let version = null;
   let currentUser = null;
   let otherMembers = [];
+  let inviteCode = null;
   let selectedPersonId = null;
   let searchQuery = '';
   const hiddenCategoryIds = new Set();
@@ -57,12 +58,49 @@
       '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;'
     }[c]));
   }
+  function safeColor(c, fallback) {
+    return typeof c === 'string' && /^#[0-9a-fA-F]{6}$/.test(c) ? c : (fallback || '#8a8f9e');
+  }
+  function safeDate(s) {
+    return typeof s === 'string' && /^\d{4}-\d{2}-\d{2}$/.test(s) ? s : null;
+  }
+  function str(v, max) { return typeof v === 'string' ? v.slice(0, max) : ''; }
+  // Daten von Server/Import sind nicht vertrauenswuerdig: Typen, IDs, Farben
+  // und Datumsangaben werden normalisiert, bevor sie in HTML-Attribute oder
+  // Styles gelangen (Schutz vor gespeichertem XSS durch praeparierte Daten).
+  function sanitizeState(raw) {
+    const idOk = (v) => typeof v === 'string' && /^[A-Za-z0-9_-]{1,64}$/.test(v);
+    const s = raw && typeof raw === 'object' ? raw : {};
+    const categories = (Array.isArray(s.categories) ? s.categories : [])
+      .filter((c) => c && idOk(c.id))
+      .map((c) => ({ id: c.id, name: str(c.name, 80), color: safeColor(c.color) }));
+    const people = (Array.isArray(s.people) ? s.people : [])
+      .filter((p) => p && idOk(p.id))
+      .map((p) => {
+        const out = {
+          id: p.id,
+          name: str(p.name, 120),
+          notes: str(p.notes, 5000),
+          categoryId: idOk(p.categoryId) ? p.categoryId : null,
+          birthDate: safeDate(p.birthDate),
+          deceased: !!p.deceased,
+          deathDate: safeDate(p.deathDate)
+        };
+        ['x', 'y', 'fx', 'fy'].forEach((k) => { if (Number.isFinite(p[k])) out[k] = p[k]; });
+        return out;
+      });
+    const personIds = new Set(people.map((p) => p.id));
+    const connections = (Array.isArray(s.connections) ? s.connections : [])
+      .filter((c) => c && idOk(c.id) && personIds.has(c.a) && personIds.has(c.b))
+      .map((c) => ({ id: c.id, a: c.a, b: c.b, label: str(c.label, 80) }));
+    return { people, categories, connections };
+  }
   function debounce(fn, ms) {
     let t = null;
     return (...args) => { clearTimeout(t); t = setTimeout(() => fn(...args), ms); };
   }
   function categoryById(id) { return state.categories.find((c) => c.id === id) || null; }
-  function categoryColor(id) { const c = categoryById(id); return c ? c.color : '#8a8f9e'; }
+  function categoryColor(id) { const c = categoryById(id); return c ? safeColor(c.color) : '#8a8f9e'; }
   function categoryName(id) { const c = categoryById(id); return c ? c.name : 'Keine Kategorie'; }
   function personById(id) { return state.people.find((p) => p.id === id); }
   function nextPaletteColor() {
@@ -346,6 +384,8 @@
       tabs.querySelectorAll('.auth-tab').forEach((b) => b.classList.toggle('active', b.dataset.tab === tab));
     }
 
+    const inviteField = document.getElementById('invite-field');
+    inviteField.hidden = setup.userCount === 0;
     if (setup.userCount === 0) {
       tabs.hidden = true;
       activate('register');
@@ -353,7 +393,7 @@
     } else if (setup.canRegister) {
       tabs.hidden = false;
       activate('login');
-      hint.textContent = 'Richtet das zweite Konto ein, damit ihr zu zweit Zugriff habt.';
+      hint.textContent = 'Richtet das zweite Konto ein. Den Einladungscode findet das erste Konto unter «Konto & Passwort».';
       tabs.querySelectorAll('.auth-tab').forEach((b) => (b.onclick = () => activate(b.dataset.tab)));
     } else {
       tabs.hidden = true;
@@ -397,7 +437,7 @@
       const res = await fetch('/api/register.php', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ username: fd.get('username'), password: fd.get('password'), displayName: fd.get('displayName') })
+        body: JSON.stringify({ username: fd.get('username'), password: fd.get('password'), displayName: fd.get('displayName'), inviteCode: fd.get('inviteCode') || '' })
       });
       const json = await res.json();
       if (!res.ok) return showAuthError('register-error', json.message || 'Registrierung fehlgeschlagen.');
@@ -427,7 +467,7 @@
     const res = await fetch('/api/network.php');
     if (res.status === 401) { await initAuthScreen(); return; }
     const json = await res.json();
-    state = json.data;
+    state = sanitizeState(json.data);
     state.people = state.people || [];
     state.categories = state.categories || [];
     state.connections = state.connections || [];
@@ -442,7 +482,7 @@
       if (res.status === 401) { await initAuthScreen(); return; }
       const json = await res.json();
       if (json.version !== version) {
-        state = json.data;
+        state = sanitizeState(json.data);
         version = json.version;
         renderAll(true);
       }
@@ -476,7 +516,7 @@
       if (res.status === 401) { saving = false; await initAuthScreen('Sitzung abgelaufen. Bitte erneut anmelden.'); return; }
       if (res.status === 409) {
         const json = await res.json();
-        state = json.data;
+        state = sanitizeState(json.data);
         version = json.version;
         dirty = false;
         saving = false;
@@ -520,8 +560,8 @@
     const counts = {};
     state.people.forEach((p) => { counts[p.categoryId || '__none__'] = (counts[p.categoryId || '__none__'] || 0) + 1; });
     const chips = state.categories.map((c) => `
-      <button type="button" class="legend-chip ${hiddenCategoryIds.has(c.id) ? 'off' : ''}" data-cat="${c.id}" title="Kategorie ein-/ausblenden">
-        <span class="dot" style="background:${c.color}"></span>${escapeHtml(c.name)} (${counts[c.id] || 0})
+      <button type="button" class="legend-chip ${hiddenCategoryIds.has(c.id) ? 'off' : ''}" data-cat="${escapeHtml(c.id)}" title="Kategorie ein-/ausblenden">
+        <span class="dot" style="background:${safeColor(c.color)}"></span>${escapeHtml(c.name)} (${counts[c.id] || 0})
       </button>`).join('');
     const noneCount = counts['__none__'] || 0;
     const noneChip = noneCount > 0 ? `
@@ -573,7 +613,7 @@
       return;
     }
     list.innerHTML = people.map((p) => `
-      <button type="button" class="person-row ${p.id === selectedPersonId ? 'selected' : ''}" data-id="${p.id}">
+      <button type="button" class="person-row ${p.id === selectedPersonId ? 'selected' : ''}" data-id="${escapeHtml(p.id)}">
         <span class="avatar" style="background:${categoryColor(p.categoryId)}">${escapeHtml((p.name || '?').trim().charAt(0).toUpperCase() || '?')}</span>
         <span class="meta">
           <span class="name">${highlightMatch(displayName(p), searchQuery)}</span>
@@ -869,13 +909,13 @@
       <div class="drawer-header"><h2>Person</h2><button class="drawer-close" id="drawer-close" aria-label="Schliessen">×</button></div>
       <div class="drawer-body">
         <label class="field"><span>Name</span><input type="text" id="f-name" value="${escapeHtml(p.name)}" placeholder="Name"></label>
-        <label class="field"><span>Geburtstag <span class="field-hint" id="f-birthdate-hint">${p.birthDate && displayAge(p) != null ? `(${displayAge(p)} Jahre)` : ''}</span></span><input type="date" id="f-birthdate" value="${p.birthDate || ''}" max="${new Date().toISOString().slice(0, 10)}"></label>
+        <label class="field"><span>Geburtstag <span class="field-hint" id="f-birthdate-hint">${p.birthDate && displayAge(p) != null ? `(${displayAge(p)} Jahre)` : ''}</span></span><input type="date" id="f-birthdate" value="${escapeHtml(p.birthDate || '')}" max="${new Date().toISOString().slice(0, 10)}"></label>
         <label class="check"><input type="checkbox" id="f-deceased" ${p.deceased ? 'checked' : ''}><span>Verstorben</span></label>
-        <label class="field" id="f-deathdate-wrap" ${p.deceased ? '' : 'hidden'}><span>Todesdatum (optional)</span><input type="date" id="f-deathdate" value="${p.deathDate || ''}" max="${new Date().toISOString().slice(0, 10)}"></label>
+        <label class="field" id="f-deathdate-wrap" ${p.deceased ? '' : 'hidden'}><span>Todesdatum (optional)</span><input type="date" id="f-deathdate" value="${escapeHtml(p.deathDate || '')}" max="${new Date().toISOString().slice(0, 10)}"></label>
         <label class="field"><span>Kategorie</span>
           <select id="f-category">
             <option value="">Keine Kategorie</option>
-            ${state.categories.map((c) => `<option value="${c.id}" ${c.id === p.categoryId ? 'selected' : ''}>${escapeHtml(c.name)}</option>`).join('')}
+            ${state.categories.map((c) => `<option value="${escapeHtml(c.id)}" ${c.id === p.categoryId ? 'selected' : ''}>${escapeHtml(c.name)}</option>`).join('')}
           </select>
         </label>
         <label class="field"><span>Notizen</span><textarea id="f-notes" placeholder="z. B. wie ihr euch kennt, Geburtstag, …">${escapeHtml(p.notes || '')}</textarea></label>
@@ -885,11 +925,11 @@
             ${conns.map((c) => {
               const other = personById(otherPersonInConnection(c, id));
               if (!other) return '';
-              return `<div class="conn-row" data-cid="${c.id}">
+              return `<div class="conn-row" data-cid="${escapeHtml(c.id)}">
                 <span class="conn-dot" style="background:${categoryColor(other.categoryId)}"></span>
-                <span class="conn-name" data-goto="${other.id}">${escapeHtml(other.name)}</span>
-                <input type="text" class="conn-label-edit" data-cid="${c.id}" value="${escapeHtml(c.label || '')}" placeholder="Beziehung" list="relationship-types">
-                <button class="conn-remove" data-remove="${c.id}" title="Verbindung entfernen">×</button>
+                <span class="conn-name" data-goto="${escapeHtml(other.id)}">${escapeHtml(other.name)}</span>
+                <input type="text" class="conn-label-edit" data-cid="${escapeHtml(c.id)}" value="${escapeHtml(c.label || '')}" placeholder="Beziehung" list="relationship-types">
+                <button class="conn-remove" data-remove="${escapeHtml(c.id)}" title="Verbindung entfernen">×</button>
               </div>`;
             }).join('') || '<p class="auth-hint">Noch keine Verbindungen.</p>'}
           </div>
@@ -974,7 +1014,7 @@
       const matches = (ql ? candidates.filter((o) => o.name.toLowerCase().includes(ql)) : candidates)
         .sort((a, b) => a.name.localeCompare(b.name, 'de-CH'))
         .slice(0, 40);
-      const rows = matches.map((o) => `<button type="button" class="person-search-item" data-id="${o.id}">${highlightMatch(o.name, q)}</button>`).join('');
+      const rows = matches.map((o) => `<button type="button" class="person-search-item" data-id="${escapeHtml(o.id)}">${highlightMatch(o.name, q)}</button>`).join('');
       const newLabel = q ? `+ Neue Person «${escapeHtml(q)}» anlegen` : '+ Neue Person anlegen';
       const emptyHint = (!matches.length && q) ? `<div class="person-search-empty">Keine Treffer für «${escapeHtml(q)}».</div>` : '';
       personSearchList.innerHTML = emptyHint + rows + `<button type="button" class="person-search-item person-search-new" data-new="1">${newLabel}</button>`;
@@ -1046,11 +1086,20 @@
   }
 
   // ------------------------------------------------------------- modal
-  function openModal(kind) {
+  async function refreshMe() {
+    try {
+      const res = await fetch('/api/me.php');
+      if (!res.ok) return;
+      const me = await res.json();
+      otherMembers = me.otherMembers || [];
+      inviteCode = me.inviteCode || null;
+    } catch (e) { /* offline, alte Werte behalten */ }
+  }
+  async function openModal(kind) {
     document.getElementById('modal-overlay').hidden = false;
     if (kind === 'categories') renderCategoriesModal();
     if (kind === 'bulk') renderBulkModal();
-    if (kind === 'account') renderAccountModal();
+    if (kind === 'account') { await refreshMe(); renderAccountModal(); }
   }
   function closeModal() { document.getElementById('modal-overlay').hidden = true; }
 
@@ -1061,11 +1110,11 @@
       <h2>Kategorien verwalten</h2>
       <div id="cat-rows">
         ${state.categories.map((c) => `
-          <div class="cat-row" data-id="${c.id}">
-            <input type="color" class="cat-color" data-id="${c.id}" value="${c.color}">
-            <input type="text" class="cat-name" data-id="${c.id}" value="${escapeHtml(c.name)}">
+          <div class="cat-row" data-id="${escapeHtml(c.id)}">
+            <input type="color" class="cat-color" data-id="${escapeHtml(c.id)}" value="${safeColor(c.color)}">
+            <input type="text" class="cat-name" data-id="${escapeHtml(c.id)}" value="${escapeHtml(c.name)}">
             <span class="auth-hint">${counts[c.id] || 0}×</span>
-            <button class="conn-remove" data-delcat="${c.id}" title="Kategorie löschen">×</button>
+            <button class="conn-remove" data-delcat="${escapeHtml(c.id)}" title="Kategorie löschen">×</button>
           </div>`).join('')}
       </div>
       <div class="new-cat-row">
@@ -1227,16 +1276,25 @@ Lisa Muster; ; 2015-06-01; Kind: Anna Muster, Kind: Peter Beispiel"></textarea>
     document.getElementById('modal-content').innerHTML = `
       <h2>Konto</h2>
       <p>Angemeldet als <strong>${escapeHtml(currentUser.displayName)}</strong> (${escapeHtml(currentUser.username)}).</p>
-      ${otherMembers.length ? `<p class="auth-hint">Gemeinsam mit: ${otherMembers.map(escapeHtml).join(', ')}</p>` : '<p class="auth-hint">Noch niemand sonst angemeldet — ladet die zweite Person mit dem Registrieren-Tab ein.</p>'}
+      ${otherMembers.length ? `<p class="auth-hint">Gemeinsam mit: ${otherMembers.map(escapeHtml).join(', ')}</p>` : `<p class="auth-hint">Noch niemand sonst angemeldet — ladet die zweite Person mit dem Registrieren-Tab ein.${inviteCode ? ` Einladungscode: <strong class="invite-code">${escapeHtml(inviteCode)}</strong>` : ''}</p>`}
+      <button type="button" class="btn btn-ghost" id="btn-logout-all" style="margin-top:12px;">Auf allen Geräten abmelden</button>
       <form id="pw-form" style="display:flex; flex-direction:column; gap:14px; margin-top:16px;">
         <label class="field"><span>Aktuelles Passwort</span><input type="password" id="pw-current" required></label>
-        <label class="field"><span>Neues Passwort (mind. 8 Zeichen)</span><input type="password" id="pw-new" minlength="8" required></label>
+        <label class="field"><span>Neues Passwort (8–72 Zeichen)</span><input type="password" id="pw-new" minlength="8" maxlength="72" required></label>
         <button class="btn btn-primary" type="submit">Passwort ändern</button>
         <p class="auth-error" id="pw-error" hidden></p>
         <p class="auth-hint" id="pw-success" hidden>Passwort aktualisiert.</p>
       </form>
       <div style="margin-top:18px; text-align:right;"><button class="btn btn-ghost" id="modal-close">Schliessen</button></div>`;
     document.getElementById('modal-close').addEventListener('click', closeModal);
+    document.getElementById('btn-logout-all').addEventListener('click', async () => {
+      if (!confirm('Auf allen Geräten abmelden, auch auf diesem?')) return;
+      try { await fetch('/api/logout_all.php', { method: 'POST' }); } catch (e) {}
+      closeModal();
+      state = { people: [], categories: [], connections: [] };
+      selectedPersonId = null;
+      await initAuthScreen();
+    });
     document.getElementById('pw-form').addEventListener('submit', async (e) => {
       e.preventDefault();
       const currentPassword = document.getElementById('pw-current').value;
@@ -1279,7 +1337,7 @@ Lisa Muster; ; 2015-06-01; Kind: Anna Muster, Kind: Peter Beispiel"></textarea>
         showToast('Datei hat nicht das erwartete Zirkel-Format.'); return;
       }
       if (!confirm('Das aktuelle Netzwerk durch die importierte Datei ersetzen? Das lässt sich nicht rückgängig machen.')) return;
-      state = parsed;
+      state = sanitizeState(parsed);
       selectedPersonId = null;
       closeDrawer();
       renderAll(true);

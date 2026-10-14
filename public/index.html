@@ -63,9 +63,13 @@
         <span>Benutzername</span>
         <input type="text" name="username" autocomplete="username" required maxlength="40">
       </label>
+      <label class="field" id="invite-field" hidden>
+        <span>Einladungscode (vom ersten Konto)</span>
+        <input type="text" name="inviteCode" autocomplete="off" autocapitalize="off" spellcheck="false" maxlength="64">
+      </label>
       <label class="field">
         <span>Passwort (mind. 8 Zeichen)</span>
-        <input type="password" name="password" autocomplete="new-password" required minlength="8">
+        <input type="password" name="password" autocomplete="new-password" required minlength="8" maxlength="72">
       </label>
       <button type="submit" class="btn btn-primary btn-block">Konto anlegen</button>
       <p class="auth-error" id="register-error" hidden></p>

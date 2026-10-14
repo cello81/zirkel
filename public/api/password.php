@@ -10,6 +10,14 @@ $newPassword = (string)($body['newPassword'] ?? '');
 if (strlen($newPassword) < 8) {
     send_json(['error' => 'weak_password', 'message' => 'Neues Passwort muss mindestens 8 Zeichen haben.'], 400);
 }
+if (strlen($newPassword) > MAX_PASSWORD_BYTES) {
+    send_json(['error' => 'weak_password', 'message' => 'Das Passwort darf höchstens 72 Zeichen haben.'], 400);
+}
+
+$pwKey = 'pw:' . $user['id'];
+if (is_rate_limited($pwKey)) {
+    send_json(['error' => 'rate_limited', 'message' => 'Zu viele Versuche. Bitte spaeter erneut versuchen.'], 429);
+}
 
 try {
     with_file_lock(USERS_FILE, [], function ($users) use ($user, $currentPassword, $newPassword) {
@@ -31,9 +39,13 @@ try {
     });
 } catch (RuntimeException $e) {
     if ($e->getMessage() === 'invalid_credentials') {
+        register_failed_attempt($pwKey);
         send_json(['error' => 'invalid_credentials', 'message' => 'Aktuelles Passwort ist falsch.'], 401);
     }
     send_json(['error' => 'server_error'], 500);
 }
+
+// Alle anderen Geraete/Sitzungen dieses Kontos abmelden; nur die aktuelle bleibt.
+revoke_tokens_for_user($user['id'], current_selector());
 
 send_json(['ok' => true]);

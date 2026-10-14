@@ -1,4 +1,15 @@
 # Zirkel: nirgends in Suchergebnissen auftauchen (defense-in-depth zum <meta name="robots">-Tag)
 <IfModule mod_headers.c>
   Header always set X-Robots-Tag "noindex, nofollow, noarchive, nosnippet, noimageindex, notranslate"
+
+  # Sicherheits-Header fuer alle Dateien (App-Seite, Skripte, API)
+  Header always set X-Content-Type-Options "nosniff"
+  Header always set X-Frame-Options "DENY"
+  Header always set Referrer-Policy "same-origin"
+  Header always set Permissions-Policy "camera=(), microphone=(), geolocation=(), payment=()"
+  # Nur ueber HTTPS wirksam (Browser ignorieren den Header ueber HTTP).
+  Header always set Strict-Transport-Security "max-age=15552000"
+  # Alles nur von der eigenen Origin: kein CDN, keine Fremdskripte. Inline-Styles
+  # sind noetig, weil die App Farben per style-Attribut setzt.
+  Header always set Content-Security-Policy "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; connect-src 'self'; worker-src 'self'; manifest-src 'self'; object-src 'none'; base-uri 'none'; form-action 'self'; frame-ancestors 'none'"
 </IfModule>
